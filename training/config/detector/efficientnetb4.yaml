@@ -16,19 +16,19 @@ backbone_config:
 
 # dataset
 all_dataset: [FaceForensics++, FF-F2F, FF-DF, FF-FS, FF-NT, FaceShifter, DeepFakeDetection, Celeb-DF-v1, Celeb-DF-v2, DFDCP, DFDC, DeeperForensics-1.0, UADFV]
-train_dataset: [FF-NT]
-test_dataset: [FaceForensics++, FF-F2F, FF-DF, FF-FS, FF-NT]
+train_dataset: [FaceForensics++]                    # FIX: train toan bo FF++ (4 fakes + real), khong phai chi FF-NT
+test_dataset: [FaceForensics++, Celeb-DF-v2]        # FIX: them cross-dataset Celeb-DF-v2
 
 compression: c23  # compression-level for videos
-train_batchSize: 32   # training batch size
-test_batchSize: 32   # test batch size
-workers: 8   # number of data loading workers
+train_batchSize: 16   # FIX: 32->16 cho T4 16GB tranh OOM (nang lai 32 neu du VRAM)
+test_batchSize: 16    # FIX: 32->16 cho khop
+workers: 4            # FIX: 8->4 cho CPU Kaggle (4 vCPU)
 frame_num: {'train': 32, 'test': 32}   # number of frames to use per video in training and testing
 resolution: 256   # resolution of output image to network
 with_mask: false   # whether to include mask information in the input
 with_landmark: false   # whether to include facial landmark information in the input
-save_ckpt: true   # whether to save checkpoint
-save_feat: true   # whether to save features
+save_ckpt: true   # FIX: giu true (da xoa dong "save_ckpt: false" trung lap phia duoi)
+save_feat: false  # FIX: true->false do day /kaggle/working (20GB limit)
 
 
 # data augmentation
@@ -73,7 +73,7 @@ save_epoch: 1   # interval epochs for saving models
 rec_iter: 100   # interval iterations for recording
 logdir: ./logs   # folder to output images and logs
 manualSeed: 1024   # manual seed for random number generation
-save_ckpt: false   # whether to save checkpoint
+# FIX: da xoa dong "save_ckpt: false" trung lap o day (truoc kia ghi de save_ckpt: true o tren)
 
 # loss function
 loss_func: cross_entropy   # loss function to use
