@@ -9,7 +9,10 @@ sys.path.append(parent_dir)
 sys.path.append(project_root_dir)
 
 from metrics.registry import DETECTOR
-from .utils import slowfast
+try:
+    from .utils import slowfast            # only video detectors (i3d/ftcn/slowfast) need it; pulls simplejson/fvcore/...
+except Exception as _e:
+    warnings.warn(f"[detectors] slowfast utils not loaded ({type(_e).__name__}); video detectors off — fine for B4/SFDCT")
 
 # Core detectors the thesis needs — import HARD (fail loudly if these break).
 from .efficientnetb4_detector import EfficientDetector             # baseline B4 (efficientnetb4 / efficientnetb4_repro)
