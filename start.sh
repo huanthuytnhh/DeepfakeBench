@@ -9,7 +9,8 @@
 #   ./start.sh train   # THIS BATCH: 2 runs in tmux (baseline EffB4 -> method SFDCT) -> viz -> auto-push results
 #   ./start.sh viz     # full figure set (ROC/PR/radar/AP-bar/heatmap/t-SNE/frequency/Grad-CAM/gate) per run
 #   ./start.sh results # collect LIGHT results (figures+metrics+logs) and push to git (token or SSH; no .pth/.npz)
-#   ./start.sh all     # setup -> data -> verify -> smoke -> train (-> viz -> push at the end)
+#   ./start.sh model   # upload checkpoints (.pth) + scores + figures to Google Drive via rclone (heavy artifacts)
+#   ./start.sh all     # setup -> data -> verify -> smoke -> train (-> viz -> push git + upload .pth to Drive)
 set -euo pipefail
 cd "$(dirname "$0")"; ROOT="$(pwd)"
 PYBIN="$(command -v python || command -v python3)"
@@ -92,9 +93,10 @@ cmd_train(){
     echo '== RUN 1/2: baseline EffB4 =='; $PYBIN training/train.py --detector_path $REPRO 2>&1 | tee $ROOT/repro.log; \
     echo '== RUN 2/2: method SFDCT =='; $PYBIN training/train.py --detector_path $SFDCT 2>&1 | tee $ROOT/sfdct.log; \
     echo '== VIZ =='; ./start.sh viz; \
-    echo '== AUTO-PUSH RESULTS =='; ./start.sh results; \
+    echo '== PUSH LIGHT RESULTS (figures+metrics -> git) =='; ./start.sh results; \
+    echo '== UPLOAD CHECKPOINTS (.pth + scores -> Google Drive) =='; ./start.sh model; \
     echo '== ALL DONE =='"
-  echo "launched tmux 'thesis' (train x2 -> viz -> push). watch:  tmux attach -t thesis"
+  echo "launched tmux 'thesis' (train x2 -> viz -> push git + upload .pth to Drive). watch:  tmux attach -t thesis"
   echo "ckpt at: logs/training/efficientnetb4_<ts>/test/Celeb-DF-v2/ckpt_best.pth (baseline)"
   echo "         logs/training/efficientnetb4_sfdct_<ts>/test/Celeb-DF-v2/ckpt_best.pth (method)"
   echo "~1 h/run on a 4090 -> ~2 h total, then figures + results auto-pushed to git."
@@ -140,6 +142,34 @@ cmd_viz(){
   done
 }
 
+cmd_model(){
+  log "upload checkpoints (.pth) + scores + figures to Google Drive via rclone"
+  command -v rclone >/dev/null 2>&1 || { echo "installing rclone..."; curl -s https://rclone.org/install.sh | bash || true; }
+  REMOTE="${RCLONE_REMOTE:-gdrive}"; DRIVE_DIR="${RCLONE_DIR:-DeepfakeBench_results}"
+  if ! rclone listremotes 2>/dev/null | grep -q "^${REMOTE}:"; then
+    echo "rclone remote '${REMOTE}:' NOT configured. One-time setup (pick one):"
+    echo "  (A) EASIEST — on your laptop:  rclone config   (n -> name 'gdrive' -> 'drive' -> auto-config in browser),"
+    echo "      then copy the conf to this box:"
+    echo "        ssh -p <PORT> root@<IP> 'mkdir -p ~/.config/rclone'"
+    echo "        scp -P <PORT> ~/.config/rclone/rclone.conf root@<IP>:~/.config/rclone/rclone.conf"
+    echo "  (B) on this box:  rclone config  -> drive -> 'Use auto config? No' -> run the printed"
+    echo "      'rclone authorize \"drive\"' on your laptop browser -> paste the token back."
+    echo "  Then re-run: ./start.sh model    (or set RCLONE_REMOTE=<yourremote>)"
+    return 1
+  fi
+  TS="$(date +%Y%m%d-%H%M%S)"; base="${REMOTE}:${DRIVE_DIR}/${TS}"
+  for mdl in efficientnetb4 efficientnetb4_sfdct; do
+    ck=$(ls -t logs/training/${mdl}_*/test/Celeb-DF-v2/ckpt_best.pth 2>/dev/null | head -1)
+    [ -z "$ck" ] && { echo "no ckpt for $mdl yet"; continue; }
+    echo "upload ckpt dir of $mdl -> ${base}/ckpt/${mdl}/"
+    rclone copy "$(dirname "$ck")" "${base}/ckpt/${mdl}/" --include "*.pth" --include "*.pickle" -P
+  done
+  for tag in repro sfdct; do
+    [ -d "viz_out/$tag" ] && { echo "upload viz_out/$tag -> ${base}/viz/${tag}/"; rclone copy "viz_out/$tag" "${base}/viz/${tag}/" -P; }
+  done
+  echo "DONE. On Drive: ${DRIVE_DIR}/${TS}  (ckpt .pth + metrics + figures + scores). List: rclone ls ${REMOTE}:${DRIVE_DIR}"
+}
+
 case "${1:-setup}" in
   setup)  cmd_setup ;;
   data)   cmd_data ;;
@@ -148,7 +178,8 @@ case "${1:-setup}" in
   train)   cmd_train ;;
   viz)     cmd_viz ;;
   results) cmd_results ;;
+  model)   cmd_model ;;
   all)     cmd_setup; cmd_data; cmd_verify; cmd_smoke; cmd_train ;;
-  *) echo "usage: ./start.sh [setup|data|verify|smoke|train|viz|results|all]"; exit 1 ;;
+  *) echo "usage: ./start.sh [setup|data|verify|smoke|train|viz|results|model|all]"; exit 1 ;;
 esac
 log "done: ${1:-setup}"
