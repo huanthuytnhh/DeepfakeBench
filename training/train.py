@@ -166,9 +166,12 @@ def choose_optimizer(model, config):
         )
         return optimizer
     elif opt_name == 'adam':
+        base_lr = config['optimizer'][opt_name]['lr']
+        # models may expose per-branch lr groups (e.g. DCT branch); baseline doesn't.
+        params = model.get_optim_groups(base_lr) if hasattr(model, 'get_optim_groups') else model.parameters()
         optimizer = optim.Adam(
-            params=model.parameters(),
-            lr=config['optimizer'][opt_name]['lr'],
+            params=params,
+            lr=base_lr,
             weight_decay=config['optimizer'][opt_name]['weight_decay'],
             betas=(config['optimizer'][opt_name]['beta1'], config['optimizer'][opt_name]['beta2']),
             eps=config['optimizer'][opt_name]['eps'],

@@ -1,0 +1,90 @@
+# training/config/detector/efficientnetb4_repro.yaml
+# (R) REPRODUCTION baseline = plain EfficientNet-B4, hyperparameters matched VERBATIM to the
+# official SCLBD/DeepfakeBench efficientnetb4.yaml so the B4 row reproduces the leaderboard
+# (within-avg ~0.9389, CDFv2 ~0.7487). Also the (P) ablation partner of efficientnetb4_sfdct.yaml:
+# IDENTICAL data / batch / frame / aug / seed / optimizer — the ONLY difference is the SFDCT module.
+# Do NOT use the local efficientnetb4.yaml (it was shrunk to batch8/frame6/25-vid subset for 3050 smoke).
+
+log_dir: logs/evaluations/effnb4_repro
+
+# model setting
+pretrained: ./training/pretrained/efficientnet-b4-6ed6700e.pth
+model_name: efficientnetb4          # plain B4 (no SFDCT)
+backbone_name: efficientnetb4
+
+# backbone setting
+backbone_config:
+  num_classes: 2
+  inc: 3
+  dropout: false
+  mode: Original
+
+# dataset
+all_dataset: [FaceForensics++, FF-F2F, FF-DF, FF-FS, FF-NT, FaceShifter, DeepFakeDetection, Celeb-DF-v1, Celeb-DF-v2, DFDCP, DFDC, DeeperForensics-1.0, UADFV]
+train_dataset: [FaceForensics++]                 # FULL FF++ (4 manip + real) = the leaderboard protocol
+test_dataset: [FaceForensics++, Celeb-DF-v2]     # within + cross (add DFDC/DFDCP if available on server)
+
+# FULL official json (719 vids/manip), NOT the 25-vid compare subset. Matches official train_config.yaml.
+dataset_json_folder: ./preprocessing/dataset_json
+
+compression: c23
+train_batchSize: 32          # OFFICIAL
+test_batchSize: 32           # OFFICIAL
+workers: 8                   # OFFICIAL
+frame_num: {'train': 32, 'test': 32}   # OFFICIAL
+resolution: 256
+with_mask: false
+with_landmark: false
+save_ckpt: true
+save_feat: false
+
+# data augmentation (OFFICIAL block, verbatim). For the A0 no-aug ablation set use_data_augmentation: false.
+use_data_augmentation: true
+data_aug:
+  flip_prob: 0.5
+  rotate_prob: 0.5
+  rotate_limit: [-10, 10]
+  blur_prob: 0.5
+  blur_limit: [3, 7]
+  brightness_prob: 0.5
+  brightness_limit: [-0.1, 0.1]
+  contrast_limit: [-0.1, 0.1]
+  quality_lower: 40
+  quality_upper: 100
+
+# normalization
+mean: [0.5, 0.5, 0.5]
+std: [0.5, 0.5, 0.5]
+
+# optimizer (OFFICIAL: adam lr 2e-4)
+optimizer:
+  type: adam
+  adam:
+    lr: 0.0002
+    beta1: 0.9
+    beta2: 0.999
+    eps: 0.00000001
+    weight_decay: 0.0005
+    amsgrad: false
+  sgd:
+    lr: 0.0002
+    momentum: 0.9
+    weight_decay: 0.0005
+
+# training (OFFICIAL)
+lr_scheduler: null
+nEpochs: 10
+start_epoch: 0
+save_epoch: 1
+rec_iter: 100
+logdir: ./logs
+manualSeed: 1024             # ablation seeds: 1024 / 2025 / 7
+loss_func: cross_entropy
+losstype: null
+
+# metric
+metric_scoring: auc
+
+# cuda
+cuda: true
+cudnn: true

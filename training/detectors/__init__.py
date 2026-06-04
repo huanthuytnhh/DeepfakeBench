@@ -12,6 +12,13 @@ from .utils import slowfast
 from .facexray_detector import FaceXrayDetector
 from .xception_detector import XceptionDetector
 from .efficientnetb4_detector import EfficientDetector
+from .efficientnetb4_sfdct_detector import EfficientSFDCTDetector   # the thesis method (verified)
+# NOTE: experimental B4 variants kept LOCAL only (not registered here) to guarantee a clean
+# package import on the paid GPU run. Re-enable after verifying their deps/imports:
+#   from .efficientnetb4_dct_detector import EfficientDCTDetector
+#   from .efficientnetb4_hfdct_detector import EfficientHFDCTDetector
+#   from .efficientnetb4_hfinput_detector import EfficientHFInputDetector
+#   from .ecsf_detector import ECSFDetector
 from .resnet34_detector import ResnetDetector
 from .f3net_detector import F3netDetector
 from .meso4_detector import Meso4Detector
