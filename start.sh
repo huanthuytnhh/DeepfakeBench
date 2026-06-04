@@ -46,11 +46,13 @@ cmd_setup(){
 import json;d=json.load(open("$JSONDIR/FaceForensics++.json"))["FaceForensics++"]
 print("FF++ train videos/manip:",{k:len(v["train"]["c23"]) for k,v in d.items()})
 PY
-  log "patch train_config.yaml (it OVERRIDES the detector yaml for paths)"
-  sed -i "s#^rgb_dir:.*#rgb_dir: $DATAROOT#" training/config/train_config.yaml
-  sed -i "s#^dataset_json_folder:.*#dataset_json_folder: ./preprocessing/dataset_json#" training/config/train_config.yaml
-  sed -i "s#^lmdb:.*#lmdb: False#" training/config/train_config.yaml
-  grep -nE "rgb_dir|dataset_json_folder|^log_dir|lmdb:" training/config/train_config.yaml
+  log "patch train_config.yaml + test_config.yaml (these OVERRIDE the detector yaml for paths)"
+  for c in training/config/train_config.yaml training/config/test_config.yaml; do
+    sed -i "s#^rgb_dir:.*#rgb_dir: $DATAROOT#" "$c"
+    sed -i "s#^dataset_json_folder:.*#dataset_json_folder: ./preprocessing/dataset_json#" "$c"
+    sed -i "s#^lmdb:.*#lmdb: False#" "$c"        # raw frames; test_config ships lmdb:True -> would break eval/viz
+    echo "-- $c --"; grep -nE "rgb_dir|dataset_json_folder|^log_dir|lmdb:" "$c"
+  done
   cmd_verify
 }
 

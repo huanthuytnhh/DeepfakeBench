@@ -75,7 +75,8 @@ def infer(model, loader):
             if dd.get(k) is not None: dd[k] = dd[k].to(device)
         p = model(dd, inference=True)
         probs += list(p["prob"].cpu().numpy()); labels += list(dd["label"].cpu().numpy())
-        feats += list(p["feat"].cpu().numpy())
+        f = p["feat"]; f = f.mean((2, 3)) if f.dim() == 4 else f   # GAP -> [B,C]; raw 4D feat would be ~10GB in npz
+        feats += list(f.cpu().numpy())
     return np.array(probs), np.array(labels), np.array(feats)
 
 def tpr_at(fpr, tpr, t): return float(np.interp(t, fpr, tpr))
@@ -125,6 +126,7 @@ def fig_heatmap(res):
 def fig_tsne(name, npz):
     from sklearn.manifold import TSNE
     d = np.load(npz); feat, label = d["feat"], d["label"]
+    if feat.ndim > 2: feat = feat.reshape(feat.shape[0], -1)       # safety: flatten if not already [N,C]
     idx = np.random.RandomState(0).permutation(len(feat))[:2000]
     emb = TSNE(n_components=2, init="pca", perplexity=30).fit_transform(feat[idx])
     fig, a = plt.subplots(figsize=(5.5, 5))
