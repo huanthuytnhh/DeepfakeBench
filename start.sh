@@ -32,7 +32,7 @@ cmd_setup(){
   log "deps (uses the image's CUDA torch; installs the rest)"
   pip install -q -U gdown
   pip install -q efficientnet_pytorch albumentations opencv-python-headless imgaug \
-                 scikit-image scikit-learn pandas tqdm pyyaml imageio einops kornia timm || true
+                 scikit-image scikit-learn pandas tqdm pyyaml imageio einops kornia timm huggingface_hub || true
   "$PYBIN" -c "import torch;print('torch',torch.__version__,'cuda',torch.cuda.is_available())"
   log "pretrained B4 weight"
   mkdir -p training/pretrained
@@ -79,6 +79,18 @@ from detectors import DETECTOR
 need=["efficientnetb4","efficientnetb4_sfdct"]
 print("detectors registered:",len(DETECTOR.data),"| needed:",{k:(k in DETECTOR.data) for k in need})
 PY
+  log "preflight: upload credentials (fail fast BEFORE the paid 2h run)"
+  if [ -n "${HF_TOKEN:-}" ]; then
+    "$PYBIN" - <<'PY' || echo "  !! HF_TOKEN is SET but INVALID -> .pth upload would FAIL. Fix the token before ./start.sh train."
+import os
+from huggingface_hub import HfApi
+u=HfApi(token=os.environ["HF_TOKEN"]).whoami()["name"]
+print(f"  HF token OK -> user '{u}'. .pth will auto-upload to {os.environ.get('HF_REPO','huanthuytnhh/deepfake')}")
+PY
+  else
+    echo "  WARNING: HF_TOKEN not set -> .pth will NOT auto-upload. Do: export HF_TOKEN=hf_xxx  (BEFORE ./start.sh train)"
+  fi
+  [ -n "${GH_TOKEN:-}" ] && echo "  GH_TOKEN set (figures -> git)." || echo "  (GH_TOKEN not set -> figures stay local + zipped; optional.)"
 }
 
 cmd_smoke(){
