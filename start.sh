@@ -6,9 +6,10 @@
 #   ./start.sh data    # download + extract FF++ & Celeb-DF-v2 (heavy; skips if already present)
 #   ./start.sh verify  # a frame resolves on disk + the 2 needed detectors are registered
 #   ./start.sh smoke   # 1-epoch end-to-end smoke (catch bugs before the paid full run)
-#   ./start.sh train   # THIS BATCH: 2 runs sequentially in tmux — baseline (EffB4) then method (SFDCT)
-#   ./start.sh viz     # result figures (ROC/AUC/t-SNE/gate) from the newest sfdct checkpoint
-#   ./start.sh all     # setup -> data -> verify -> smoke -> train
+#   ./start.sh train   # THIS BATCH: 2 runs in tmux (baseline EffB4 -> method SFDCT) -> viz -> auto-push results
+#   ./start.sh viz     # full figure set (ROC/PR/radar/AP-bar/heatmap/t-SNE/frequency/Grad-CAM/gate) per run
+#   ./start.sh results # collect LIGHT results (figures+metrics+logs) and push to git (token or SSH; no .pth/.npz)
+#   ./start.sh all     # setup -> data -> verify -> smoke -> train (-> viz -> push at the end)
 set -euo pipefail
 cd "$(dirname "$0")"; ROOT="$(pwd)"
 PYBIN="$(command -v python || command -v python3)"
@@ -86,15 +87,46 @@ cmd_smoke(){
 }
 
 cmd_train(){
-  log "THIS BATCH = 2 runs SEQUENTIALLY (baseline EffB4 -> method SFDCT), full protocol, in one tmux session"
+  log "THIS BATCH = 2 runs SEQUENTIALLY (baseline EffB4 -> method SFDCT) -> viz -> auto-push results, in one tmux"
   tmux new -d -s thesis "cd $ROOT && \
     echo '== RUN 1/2: baseline EffB4 =='; $PYBIN training/train.py --detector_path $REPRO 2>&1 | tee $ROOT/repro.log; \
     echo '== RUN 2/2: method SFDCT =='; $PYBIN training/train.py --detector_path $SFDCT 2>&1 | tee $ROOT/sfdct.log; \
-    echo '== BOTH RUNS DONE =='"
-  echo "launched tmux 'thesis'. watch:  tmux attach -t thesis"
-  echo "ckpt will be at: logs/training/efficientnetb4_<ts>/test/Celeb-DF-v2/ckpt_best.pth (baseline)"
-  echo "                 logs/training/efficientnetb4_sfdct_<ts>/test/Celeb-DF-v2/ckpt_best.pth (method)"
-  echo "~1 h/run on a 4090 -> ~2 h total. Then: ./start.sh viz"
+    echo '== VIZ =='; ./start.sh viz; \
+    echo '== AUTO-PUSH RESULTS =='; ./start.sh results; \
+    echo '== ALL DONE =='"
+  echo "launched tmux 'thesis' (train x2 -> viz -> push). watch:  tmux attach -t thesis"
+  echo "ckpt at: logs/training/efficientnetb4_<ts>/test/Celeb-DF-v2/ckpt_best.pth (baseline)"
+  echo "         logs/training/efficientnetb4_sfdct_<ts>/test/Celeb-DF-v2/ckpt_best.pth (method)"
+  echo "~1 h/run on a 4090 -> ~2 h total, then figures + results auto-pushed to git."
+  echo "NOTE: auto-push needs creds on THIS box -> export GH_TOKEN=ghp_... (fine-scoped, revoke after) BEFORE training,"
+  echo "      or have ~/.ssh/id_ed25519_github present. Without creds, results are committed locally + zipped to /workspace."
+}
+
+cmd_results(){
+  log "collect + push LIGHT results (figures + metrics + logs; .pth/.npz EXCLUDED — too big for git)"
+  TS="$(date +%Y%m%d-%H%M%S)"; DEST="results/$TS"; mkdir -p "$DEST/figures"
+  for tag in repro sfdct; do
+    if [ -d "viz_out/$tag" ]; then mkdir -p "$DEST/figures/$tag"
+      cp viz_out/$tag/*.png        "$DEST/figures/$tag/" 2>/dev/null || true
+      cp viz_out/$tag/results.json "$DEST/figures/$tag/" 2>/dev/null || true
+    fi
+  done
+  cp ./*.log "$DEST/" 2>/dev/null || true
+  find logs/training -name metric_dict_best.pickle -exec cp --parents {} "$DEST/" \; 2>/dev/null || true
+  find logs/training -name training.log            -exec cp --parents {} "$DEST/" \; 2>/dev/null || true
+  echo "results size:"; du -sh "$DEST" 2>/dev/null || true
+  git add -f "$DEST" >/dev/null 2>&1 || true
+  git -c user.email="vast@local" -c user.name="vast-runner" commit -q -m "results: vast run $TS (figures + metrics, light)" \
+    || { echo "nothing new to commit"; return 0; }
+  if [ -n "${GH_TOKEN:-}" ]; then
+    git push "https://x-access-token:${GH_TOKEN}@github.com/huanthuytnhh/DeepfakeBench.git" HEAD:main && echo "results pushed to main (token)"
+  elif [ -f "$HOME/.ssh/id_ed25519_github" ]; then
+    GIT_SSH_COMMAND="ssh -i $HOME/.ssh/id_ed25519_github -o IdentitiesOnly=yes -o StrictHostKeyChecking=accept-new" \
+      git push git@github.com:huanthuytnhh/DeepfakeBench.git HEAD:main && echo "results pushed to main (ssh)"
+  else
+    echo "No GH creds on this box -> results committed locally only."
+    zip -qr "/workspace/results_$TS.zip" "$DEST" 2>/dev/null && echo "zipped: /workspace/results_$TS.zip (rsync it to your laptop)"
+  fi
 }
 
 cmd_viz(){
@@ -112,10 +144,11 @@ case "${1:-setup}" in
   setup)  cmd_setup ;;
   data)   cmd_data ;;
   verify) cmd_verify ;;
-  smoke)  cmd_smoke ;;
-  train)  cmd_train ;;
-  viz)    cmd_viz ;;
-  all)    cmd_setup; cmd_data; cmd_verify; cmd_smoke; cmd_train ;;
-  *) echo "usage: ./start.sh [setup|data|verify|smoke|train|viz|all]"; exit 1 ;;
+  smoke)   cmd_smoke ;;
+  train)   cmd_train ;;
+  viz)     cmd_viz ;;
+  results) cmd_results ;;
+  all)     cmd_setup; cmd_data; cmd_verify; cmd_smoke; cmd_train ;;
+  *) echo "usage: ./start.sh [setup|data|verify|smoke|train|viz|results|all]"; exit 1 ;;
 esac
 log "done: ${1:-setup}"
