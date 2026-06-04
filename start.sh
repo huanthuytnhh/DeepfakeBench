@@ -15,12 +15,12 @@ set -euo pipefail
 cd "$(dirname "$0")"; ROOT="$(pwd)"
 PYBIN="$(command -v python || command -v python3)"
 
-# --- editable: Google Drive IDs (from your runbook) + paths ---
-WEIGHT_URL="https://github.com/lukemelas/EfficientNet-PyTorch/releases/download/1.0/efficientnet-b4-6ed6700e.pth"
-JSON_FFPP_ID="11BxHUbcYl10SctvS-BWaSnPtMIQTT6AY"
-JSON_CDF_ID="1CEr_vuI8UuJkD6oAExl6_Hf6cZmYMgpm"
-DATA_FFPP_ID="1mZ9NNtgW_4oo9S996uQh9-SmRYaLxPnb"
-DATA_CDF_ID="1oSihXtB0caSGAX0Tt3MxgFbsuY46ecml"
+# --- editable: Google Drive IDs (override with env vars if needed) + paths ---
+WEIGHT_URL="${WEIGHT_URL:-https://github.com/lukemelas/EfficientNet-PyTorch/releases/download/1.0/efficientnet-b4-6ed6700e.pth}"
+JSON_FFPP_ID="${JSON_FFPP_ID:-11BxHUbcYl10SctvS-BWaSnPtMIQTT6AY}"
+JSON_CDF_ID="${JSON_CDF_ID:-1CEr_vuI8UuJkD6oAExl6_Hf6cZmYMgpm}"
+DATA_FFPP_ID="${DATA_FFPP_ID:-1Qolh4nuuBNzu3XpoHx2l4nO4fsALNB0h}"   # FF++ data (zip) — updated link
+DATA_CDF_ID="${DATA_CDF_ID:-1oSihXtB0caSGAX0Tt3MxgFbsuY46ecml}"
 DATAROOT="$ROOT/datasets"
 JSONDIR="$ROOT/preprocessing/dataset_json"
 REPRO="./training/config/detector/efficientnetb4_repro.yaml"
