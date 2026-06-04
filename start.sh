@@ -33,7 +33,9 @@ cmd_setup(){
   pip install -q -U gdown
   pip install -q efficientnet_pytorch albumentations opencv-python-headless imgaug \
                  scikit-image scikit-learn pandas tqdm pyyaml imageio einops kornia timm huggingface_hub || true
-  "$PYBIN" -c "import torch;print('torch',torch.__version__,'cuda',torch.cuda.is_available())"
+  "$PYBIN" -c "import torch; assert torch.cuda.is_available(),'no CUDA'; x=torch.randn(64,64,device='cuda'); _=(x@x).sum().item(); print('torch',torch.__version__,'| cuda',torch.version.cuda,'|',torch.cuda.get_device_name(0),'-> CUDA op OK')" \
+    || { echo '!! torch cannot run on this GPU (RTX 50-series/Blackwell sm_120 needs torch>=2.6 + cu126/cu128).'; \
+         echo '   Fix: pip install -U torch torchvision --index-url https://download.pytorch.org/whl/cu126'; exit 1; }
   log "pretrained B4 weight"
   mkdir -p training/pretrained
   [ -s training/pretrained/efficientnet-b4-6ed6700e.pth ] || wget -q -O training/pretrained/efficientnet-b4-6ed6700e.pth "$WEIGHT_URL"
