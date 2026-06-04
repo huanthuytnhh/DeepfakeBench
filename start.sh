@@ -60,13 +60,15 @@ PY
 
 cmd_data(){
   log "datasets (heavy; bottleneck is Google-Drive throttle, not your link). Run inside tmux."
+  command -v unzip >/dev/null 2>&1 || { echo "installing unzip..."; apt-get update -qq && apt-get install -y -qq unzip; } || true
   mkdir -p "$DATAROOT"; ( cd "$DATAROOT"
     [ -d "$DATAROOT/FaceForensics++" ] || gdown "$DATA_FFPP_ID"
     [ -d "$DATAROOT/Celeb-DF-v2" ]     || gdown "$DATA_CDF_ID"
     shopt -s nullglob
     for f in *.zip;             do echo "unzip $f"; unzip -qn "$f"; done
     for f in *.tar *.tar.gz *.tgz; do echo "untar $f"; tar xf "$f"; done )
-  ls "$DATAROOT"
+  echo "== datasets/ after extract =="; ls -la "$DATAROOT"
+  [ -d "$DATAROOT/FaceForensics++" ] && echo "FaceForensics++/ OK" || echo "⚠️ no FaceForensics++/ — check zip layout (may need to move folders)"
 }
 
 cmd_verify(){
