@@ -148,7 +148,7 @@ cmd_model(){
   if [ -z "${HF_TOKEN:-}" ]; then
     echo "Set a WRITE token first (headless, no OAuth):"
     echo "  export HF_TOKEN=hf_xxx     # create at https://huggingface.co/settings/tokens  (role: Write)"
-    echo "  optional: export HF_REPO=<user>/deepfakebench-thesis   (default: <your-hf-user>/deepfakebench-thesis)"
+    echo "  optional: export HF_REPO=<user>/<repo>   (default: huanthuytnhh/deepfake)"
     echo "Then re-run: ./start.sh model"
     return 1
   fi
@@ -156,8 +156,8 @@ cmd_model(){
 import os, glob, time, os.path as osp
 from huggingface_hub import HfApi
 api = HfApi(token=os.environ["HF_TOKEN"])
-repo = os.environ.get("HF_REPO") or f"{api.whoami()['name']}/deepfakebench-thesis"
-api.create_repo(repo, repo_type="model", private=True, exist_ok=True)
+repo = os.environ.get("HF_REPO") or "huanthuytnhh/deepfake"
+api.create_repo(repo, repo_type="model", exist_ok=True)  # no-op if it exists; keeps its current visibility
 ts = time.strftime("%Y%m%d-%H%M%S"); up = 0
 for mdl in ("efficientnetb4", "efficientnetb4_sfdct"):
     cks = sorted(glob.glob(f"logs/training/{mdl}_*/test/Celeb-DF-v2/ckpt_best.pth"), key=osp.getmtime)
