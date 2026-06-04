@@ -9,8 +9,8 @@
 #   ./start.sh train   # THIS BATCH: 2 runs in tmux (baseline EffB4 -> method SFDCT) -> viz -> auto-push results
 #   ./start.sh viz     # full figure set (ROC/PR/radar/AP-bar/heatmap/t-SNE/frequency/Grad-CAM/gate) per run
 #   ./start.sh results # collect LIGHT results (figures+metrics+logs) and push to git (token or SSH; no .pth/.npz)
-#   ./start.sh model   # upload checkpoints (.pth) + scores + figures to Google Drive via rclone (heavy artifacts)
-#   ./start.sh all     # setup -> data -> verify -> smoke -> train (-> viz -> push git + upload .pth to Drive)
+#   ./start.sh model   # upload checkpoints (.pth) + scores + figures to Hugging Face Hub (needs HF_TOKEN)
+#   ./start.sh all     # setup -> data -> verify -> smoke -> train (-> viz -> push git + upload .pth to HF)
 set -euo pipefail
 cd "$(dirname "$0")"; ROOT="$(pwd)"
 PYBIN="$(command -v python || command -v python3)"
@@ -94,14 +94,14 @@ cmd_train(){
     echo '== RUN 2/2: method SFDCT =='; $PYBIN training/train.py --detector_path $SFDCT 2>&1 | tee $ROOT/sfdct.log; \
     echo '== VIZ =='; ./start.sh viz; \
     echo '== PUSH LIGHT RESULTS (figures+metrics -> git) =='; ./start.sh results; \
-    echo '== UPLOAD CHECKPOINTS (.pth + scores -> Google Drive) =='; ./start.sh model; \
+    echo '== UPLOAD CHECKPOINTS (.pth + scores -> Hugging Face) =='; ./start.sh model; \
     echo '== ALL DONE =='"
-  echo "launched tmux 'thesis' (train x2 -> viz -> push git + upload .pth to Drive). watch:  tmux attach -t thesis"
+  echo "launched tmux 'thesis' (train x2 -> viz -> push git + upload .pth to HF). watch:  tmux attach -t thesis"
   echo "ckpt at: logs/training/efficientnetb4_<ts>/test/Celeb-DF-v2/ckpt_best.pth (baseline)"
   echo "         logs/training/efficientnetb4_sfdct_<ts>/test/Celeb-DF-v2/ckpt_best.pth (method)"
-  echo "~1 h/run on a 4090 -> ~2 h total, then figures + results auto-pushed to git."
-  echo "NOTE: auto-push needs creds on THIS box -> export GH_TOKEN=ghp_... (fine-scoped, revoke after) BEFORE training,"
-  echo "      or have ~/.ssh/id_ed25519_github present. Without creds, results are committed locally + zipped to /workspace."
+  echo "~1 h/run on a 4090 -> ~2 h total, then figures->git and .pth->Hugging Face automatically."
+  echo "NOTE: set creds on THIS box BEFORE training -> export GH_TOKEN=ghp_... (figures->git) and"
+  echo "      export HF_TOKEN=hf_... (.pth->HF). Without them, results stay local (git commit + zip to /workspace)."
 }
 
 cmd_results(){
@@ -143,31 +143,36 @@ cmd_viz(){
 }
 
 cmd_model(){
-  log "upload checkpoints (.pth) + scores + figures to Google Drive via rclone"
-  command -v rclone >/dev/null 2>&1 || { echo "installing rclone..."; curl -s https://rclone.org/install.sh | bash || true; }
-  REMOTE="${RCLONE_REMOTE:-gdrive}"; DRIVE_DIR="${RCLONE_DIR:-DeepfakeBench_results}"
-  if ! rclone listremotes 2>/dev/null | grep -q "^${REMOTE}:"; then
-    echo "rclone remote '${REMOTE}:' NOT configured. One-time setup (pick one):"
-    echo "  (A) EASIEST — on your laptop:  rclone config   (n -> name 'gdrive' -> 'drive' -> auto-config in browser),"
-    echo "      then copy the conf to this box:"
-    echo "        ssh -p <PORT> root@<IP> 'mkdir -p ~/.config/rclone'"
-    echo "        scp -P <PORT> ~/.config/rclone/rclone.conf root@<IP>:~/.config/rclone/rclone.conf"
-    echo "  (B) on this box:  rclone config  -> drive -> 'Use auto config? No' -> run the printed"
-    echo "      'rclone authorize \"drive\"' on your laptop browser -> paste the token back."
-    echo "  Then re-run: ./start.sh model    (or set RCLONE_REMOTE=<yourremote>)"
+  log "upload checkpoints (.pth) + scores + figures to Hugging Face Hub (private model repo)"
+  pip install -q -U huggingface_hub
+  if [ -z "${HF_TOKEN:-}" ]; then
+    echo "Set a WRITE token first (headless, no OAuth):"
+    echo "  export HF_TOKEN=hf_xxx     # create at https://huggingface.co/settings/tokens  (role: Write)"
+    echo "  optional: export HF_REPO=<user>/deepfakebench-thesis   (default: <your-hf-user>/deepfakebench-thesis)"
+    echo "Then re-run: ./start.sh model"
     return 1
   fi
-  TS="$(date +%Y%m%d-%H%M%S)"; base="${REMOTE}:${DRIVE_DIR}/${TS}"
-  for mdl in efficientnetb4 efficientnetb4_sfdct; do
-    ck=$(ls -t logs/training/${mdl}_*/test/Celeb-DF-v2/ckpt_best.pth 2>/dev/null | head -1)
-    [ -z "$ck" ] && { echo "no ckpt for $mdl yet"; continue; }
-    echo "upload ckpt dir of $mdl -> ${base}/ckpt/${mdl}/"
-    rclone copy "$(dirname "$ck")" "${base}/ckpt/${mdl}/" --include "*.pth" --include "*.pickle" -P
-  done
-  for tag in repro sfdct; do
-    [ -d "viz_out/$tag" ] && { echo "upload viz_out/$tag -> ${base}/viz/${tag}/"; rclone copy "viz_out/$tag" "${base}/viz/${tag}/" -P; }
-  done
-  echo "DONE. On Drive: ${DRIVE_DIR}/${TS}  (ckpt .pth + metrics + figures + scores). List: rclone ls ${REMOTE}:${DRIVE_DIR}"
+  "$PYBIN" - <<'PY'
+import os, glob, time, os.path as osp
+from huggingface_hub import HfApi
+api = HfApi(token=os.environ["HF_TOKEN"])
+repo = os.environ.get("HF_REPO") or f"{api.whoami()['name']}/deepfakebench-thesis"
+api.create_repo(repo, repo_type="model", private=True, exist_ok=True)
+ts = time.strftime("%Y%m%d-%H%M%S"); up = 0
+for mdl in ("efficientnetb4", "efficientnetb4_sfdct"):
+    cks = sorted(glob.glob(f"logs/training/{mdl}_*/test/Celeb-DF-v2/ckpt_best.pth"), key=osp.getmtime)
+    if not cks:
+        print("no ckpt for", mdl); continue
+    api.upload_folder(folder_path=osp.dirname(cks[-1]), repo_id=repo, repo_type="model",
+                      path_in_repo=f"runs/{ts}/ckpt/{mdl}", allow_patterns=["*.pth", "*.pickle"])
+    print("uploaded ckpt:", mdl); up += 1
+for tag in ("repro", "sfdct"):
+    if osp.isdir(f"viz_out/{tag}"):
+        api.upload_folder(folder_path=f"viz_out/{tag}", repo_id=repo, repo_type="model",
+                          path_in_repo=f"runs/{ts}/viz/{tag}")
+        print("uploaded viz:", tag)
+print(f"DONE -> https://huggingface.co/{repo}/tree/main/runs/{ts}" if up else "no checkpoints found")
+PY
 }
 
 case "${1:-setup}" in
