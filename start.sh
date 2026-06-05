@@ -286,6 +286,24 @@ print(f"DONE -> https://huggingface.co/{repo}/tree/main/runs/{ts}" if up else "n
 PY
 }
 
+cmd_all(){
+  # ONE command = WHOLE NEW pipeline, runs in tmux so it survives SSH disconnect:
+  #   setup(pinned+fail-fast) -> data -> verify -> smoke(+hftest) -> B4 + Row1 + Row2 -> figures -> push .pth+figures to HF.
+  # Fail-fast: '&&' stops the chain if setup/data/verify/smoke fail (before the ~14h train). SEEDS env overrides seeds.
+  command -v tmux >/dev/null 2>&1 || { apt-get update -qq && apt-get install -y -qq tmux >/dev/null 2>&1; } || true
+  local seeds="${SEEDS:-1024}"
+  tmux new -d -s thesis "cd $ROOT && export HF_TOKEN='${HF_TOKEN:-}' GH_TOKEN='${GH_TOKEN:-}' HF_REPO='${HF_REPO:-}' && \
+    ./start.sh setup && ./start.sh data && ./start.sh verify && ./start.sh smoke && \
+    echo '== FULL TRAIN: B4 + Row1 + Row2 -> figures -> HF ==' && \
+    RUN_B4=1 bash tools/run_improved_ablation.sh '$seeds' 2>&1 | tee $ROOT/pipeline.log; \
+    echo '== PIPELINE DONE =='"
+  echo "launched tmux 'thesis' = FULL pipeline (setup -> data -> verify -> smoke -> B4+Row1+Row2 -> figures -> HF push)."
+  echo "  ~13-14h for 3 runs @1 seed on a single GPU. Models+figures auto-push to HF huanthuytnhh/deepfake."
+  echo "  watch:  tmux attach -t thesis        (detach without killing: Ctrl-b then d)"
+  echo "  peek:   tmux capture-pane -t thesis -p | tail -40"
+  [ -z "${HF_TOKEN:-}" ] && echo "  !! HF_TOKEN not set -> results will ZIP to /workspace instead of HF. export it BEFORE ./start.sh all."
+}
+
 case "${1:-setup}" in
   setup)  cmd_setup ;;
   data)       cmd_data ;;
@@ -293,11 +311,12 @@ case "${1:-setup}" in
   verify)     cmd_verify ;;
   smoke)   cmd_smoke ;;
   hftest)  cmd_hftest ;;
-  train)   cmd_train ;;
+  train)   cmd_train ;;          # OLD flow (B4 + naive SFDCT). Kept for reference.
   viz)     cmd_viz ;;
   results) cmd_results ;;
   model)   cmd_model ;;
-  all)     cmd_setup; cmd_data; cmd_verify; cmd_smoke; cmd_train ;;
+  all)     cmd_all ;;            # NEW full pipeline (B4 + Row1 + Row2 -> figures -> HF), in tmux
+  all-old) cmd_setup; cmd_data; cmd_verify; cmd_smoke; cmd_train ;;
   *) echo "usage: ./start.sh [setup|data|verify|smoke|train|viz|results|model|all]"; exit 1 ;;
 esac
 log "done: ${1:-setup}"
