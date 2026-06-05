@@ -34,11 +34,15 @@ api = HfApi(token=os.environ["HF_TOKEN"]); repo = os.environ["REPO"]
 api.create_repo(repo, repo_type="model", exist_ok=True)
 tag, ts, rundir = os.environ["TAG"], os.environ["TS"], os.environ["RUNDIR"]
 api.upload_folder(folder_path=rundir, repo_id=repo, repo_type="model",
-                  path_in_repo=f"runs/{ts}/{tag}/ckpt", allow_patterns=["*.pth", "*.pickle"])   # model
+                  path_in_repo=f"runs/{ts}/{tag}/ckpt", allow_patterns=["*.pth", "*.pickle"])   # model + metrics
 if osp.isdir(f"viz_out/{tag}"):
     api.upload_folder(folder_path=f"viz_out/{tag}", repo_id=repo, repo_type="model",
                       path_in_repo=f"runs/{ts}/{tag}/viz")                                       # figures
-print(f"  pushed {tag} -> https://huggingface.co/{repo}/tree/main/runs/{ts}/{tag}")
+for lg in (f"logs/ablation_cdfv2/{tag}.train.log", f"logs/ablation_cdfv2/{tag}.viz.log"):        # logs
+    if osp.isfile(lg):
+        api.upload_file(path_or_fileobj=lg, path_in_repo=f"runs/{ts}/{tag}/{osp.basename(lg)}",
+                        repo_id=repo, repo_type="model")
+print(f"  pushed {tag} (model+figures+logs) -> https://huggingface.co/{repo}/tree/main/runs/{ts}/{tag}")
 PY
   else
     echo "  [$tag] HF_TOKEN missing -> zipping locally"
@@ -75,12 +79,29 @@ for s in $SEEDS; do
     "s/^use_dct_fomixup:.*/use_dct_fomixup: true/; s/^dct_drop_low_bands:.*/dct_drop_low_bands: 3/; s/^dct_fca_attention:.*/dct_fca_attention: true/; s/^use_single_center_loss:.*/use_single_center_loss: true/"
 done
 
-echo; echo "================ Celeb-DF-v2 cross-test AUC ================"
-for f in "$OUT"/*.train.log; do
-  [ -e "$f" ] || continue
-  auc=$(grep -oE "Celeb-DF-v2:[[:space:]]+auc=[0-9.]+" "$f" | tail -1 | grep -oE "[0-9.]+$")
-  printf "%-30s CDFv2 AUC = %s\n" "$(basename "$f" .train.log)" "${auc:-<none>}"
-done
-echo "==========================================================="
-echo "B4 baseline (reused run) bar ~0.7487. A real win = a Row's AUC strictly above your own B4 number."
-[ -n "${HF_TOKEN:-}" ] && echo "Models+figures on HF: https://huggingface.co/$REPO/tree/main/runs/$TS"
+echo
+SUMMARY="$OUT/cdfv2_summary_${TS}.txt"
+{
+  echo "============== Celeb-DF-v2 cross-test AUC (run $TS) =============="
+  for f in "$OUT"/*.train.log; do
+    [ -e "$f" ] || continue
+    auc=$(grep -oE "Celeb-DF-v2:[[:space:]]+auc=[0-9.]+" "$f" | tail -1 | grep -oE "[0-9.]+$")
+    printf "%-30s CDFv2 AUC = %s\n" "$(basename "$f" .train.log)" "${auc:-<none>}"
+  done
+  echo "================================================================"
+  echo "B4 baseline (reused) bar ~0.7487. A real win = a Row's AUC strictly above your own B4 number."
+} | tee "$SUMMARY"
+
+# push the run-level summary too (so EVERYTHING is on HF: model + figures + logs + summary)
+if [ -n "${HF_TOKEN:-}" ]; then
+  TS="$TS" REPO="$REPO" SUMMARY="$SUMMARY" "$PYBIN" - <<'PY' 2>/dev/null || echo "(summary push failed)"
+import os
+from huggingface_hub import HfApi
+api = HfApi(token=os.environ["HF_TOKEN"])
+api.upload_file(path_or_fileobj=os.environ["SUMMARY"],
+                path_in_repo=f"runs/{os.environ['TS']}/cdfv2_summary.txt",
+                repo_id=os.environ["REPO"], repo_type="model")
+print(f"  summary pushed -> https://huggingface.co/{os.environ['REPO']}/blob/main/runs/{os.environ['TS']}/cdfv2_summary.txt")
+PY
+  echo "ALL results (model+figures+logs+summary) on HF: https://huggingface.co/$REPO/tree/main/runs/$TS"
+fi
