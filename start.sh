@@ -33,13 +33,35 @@ cmd_setup(){
   log "deps (image's CUDA torch + the rest; uses uv = fast parallel resolver, falls back to pip)"
   # NOTE: do NOT install imgaug — it uses np.sctypes (removed in NumPy 2.0, which torch 2.11 ships) and crashes.
   # albumentations 1.3.1 wraps the imgaug import in try/except -> falls back to stubs; our aug uses no imgaug transform.
-  PKGS="gdown tensorboard lmdb efficientnet_pytorch albumentations==1.3.1 opencv-python-headless scikit-image scikit-learn pandas tqdm pyyaml imageio einops kornia timm huggingface_hub hf_transfer"
+  # ALL versions PINNED to the locally smoke-validated stack (2026-06-05) so a fresh box reproduces it exactly,
+  # no version drift. numpy/torch are intentionally NOT pinned here: they come from the box's CUDA template
+  # (torch arch-coupled). These pinned app-libs work with BOTH numpy 1.26 (Ada/cu124) and numpy 2.0 (Blackwell/cu128).
+  PKGS="gdown==6.0.0 tensorboard==2.15.2 lmdb==2.2.0 efficientnet_pytorch==0.7.1 albumentations==1.3.1 \
+opencv-python-headless==4.11.0.86 scikit-image==0.25.2 scikit-learn==1.6.1 pandas==2.1.4 tqdm==4.67.1 \
+pyyaml==6.0.2 imageio==2.37.3 einops==0.8.1 kornia==0.8.2 timm==1.0.27 huggingface_hub==1.17.0 hf_transfer==0.1.9"
   pip install -q -U uv >/dev/null 2>&1 || true
   if command -v uv >/dev/null 2>&1; then
     uv pip install --python "$PYBIN" $PKGS || pip install -q $PKGS    # uv: seconds, not minutes
   else
     pip install -q $PKGS || true
   fi
+  # ---- HARDEN against the exact library errors we hit (so a fresh box never crashes mid-train) ----
+  # 1) imgaug: uses np.sctypes (removed in NumPy 2.0) -> AttributeError on import. If the box's template
+  #    pre-installed it, albumentations 1.3.1 will try to import it and crash. Remove it so alb falls back to stubs.
+  pip uninstall -y imgaug >/dev/null 2>&1 || true
+  # 2) albumentations MUST be exactly 1.3.1 (1.4+ -> ZeroDivisionError in A.OneOf([IsotropicResize],p=1);
+  #    also changed ImageCompression(quality_lower/upper) API). Force it if a different version slipped in.
+  AVER="$("$PYBIN" -c 'import albumentations as A;print(A.__version__)' 2>/dev/null || echo none)"
+  [ "$AVER" = "1.3.1" ] || { echo "   albumentations=$AVER -> forcing 1.3.1"; pip install -q --force-reinstall --no-deps albumentations==1.3.1 || true; }
+  # 3) FAIL-FAST: the real aug API path must import + run now, or stop here (NOT 2h into training).
+  "$PYBIN" - <<'PY' || { echo '!! LIBRARY CHECK FAILED — fix deps before training (see error above)'; exit 1; }
+import numpy as np, albumentations as A, cv2, torch, lmdb, skimage, sklearn  # all train-critical imports
+img=(np.random.rand(256,256,3)*255).astype('uint8')
+t=A.Compose([A.OneOf([A.GaussianBlur(p=1),A.GaussNoise(p=1)],p=1),                 # OneOf p=1 -> 1.4+ ZeroDivisionError
+             A.ImageCompression(quality_lower=40,quality_upper=100,p=1)])          # quality_lower/upper API
+_=t(image=img)['image']
+print('   lib check OK: numpy',np.__version__,'| albumentations',A.__version__,'| imgaug absent | aug runs')
+PY
   "$PYBIN" -c "import torch; assert torch.cuda.is_available(),'no CUDA'; x=torch.randn(64,64,device='cuda'); _=(x@x).sum().item(); print('torch',torch.__version__,'| cuda',torch.version.cuda,'|',torch.cuda.get_device_name(0),'-> CUDA op OK')" \
     || { echo '!! torch cannot run on this GPU (RTX 50-series/Blackwell sm_120 needs torch>=2.6 + cu126/cu128).'; \
          echo '   Fix: pip install -U torch torchvision --index-url https://download.pytorch.org/whl/cu126'; exit 1; }
