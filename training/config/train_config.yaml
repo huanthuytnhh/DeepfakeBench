@@ -1,9 +1,9 @@
 mode: train
-lmdb: True
+lmdb: False                       # raw RGB frames (NOT lmdb). lmdb:True would redirect json to the EMPTY dataset_json_v3 -> crash.
 dry_run: false
-rgb_dir: './datasets/rgb'
+rgb_dir: './datasets'             # start.sh sets this to the absolute datasets/ path
 lmdb_dir:  './datasets/lmdb'
-dataset_json_folder: './preprocessing/dataset_json'
+dataset_json_folder: './preprocessing/dataset_json' # FULL FF++/CDF (719 vids/manip)
 SWA: False
 save_avg: True
 log_dir: ./logs/training/
