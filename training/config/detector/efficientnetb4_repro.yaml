@@ -1,7 +1,9 @@
 # training/config/detector/efficientnetb4_repro.yaml
 # (R) REPRODUCTION baseline = plain EfficientNet-B4, hyperparameters matched VERBATIM to the
-# official SCLBD/DeepfakeBench efficientnetb4.yaml so the B4 row reproduces the leaderboard
-# (within-avg ~0.9389, CDFv2 ~0.7487). Also the (P) ablation partner of efficientnetb4_sfdct.yaml:
+# official SCLBD/DeepfakeBench efficientnetb4.yaml so the B4 row reproduces the leaderboard.
+# TARGETS for our test sets: FF++ c23 (within) ~0.9567 ; Celeb-DF-v2 (cross) ~0.7487.
+# (The leaderboard "Avg. 0.9389" is the 6-column within mean INCLUDING c40 — we do NOT test c40, so the
+#  correct within target is the c23 column 0.9567, not 0.9389.) Also the (P) ablation partner of efficientnetb4_sfdct.yaml:
 # IDENTICAL data / batch / frame / aug / seed / optimizer — the ONLY difference is the SFDCT module.
 # Do NOT use the local efficientnetb4.yaml (it was shrunk to batch8/frame6/25-vid subset for 3050 smoke).
 
