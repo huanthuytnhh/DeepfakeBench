@@ -29,9 +29,9 @@ run_one () {  # $1=base_yaml  $2=tag  $3=seed  $4=extra_sed(optional)
 for s in $SEEDS; do
   # baseline B4 (same pipeline)
   run_one "$B4" "b4" "$s"
-  # SFDCT improved: enable Fo-Mixup + consistency + drop low bands
+  # SFDCT improved: S1 DCT-sign + S2 SRM-residual + S3 Fo-Mixup/consistency + drop-low-bands (all levers ON)
   run_one "$SFDCT" "sfdct_improved" "$s" \
-    "s/^use_dct_fomixup:.*/use_dct_fomixup: true/; s/^dct_drop_low_bands:.*/dct_drop_low_bands: 3/"
+    "s/^use_dct_fomixup:.*/use_dct_fomixup: true/; s/^dct_drop_low_bands:.*/dct_drop_low_bands: 3/; s/^dct_use_sign:.*/dct_use_sign: true/; s/^dct_srm_residual:.*/dct_srm_residual: true/"
 done
 
 echo; echo "================ Celeb-DF-v2 cross-test AUC ================"
