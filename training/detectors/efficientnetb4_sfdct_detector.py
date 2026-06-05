@@ -1,26 +1,20 @@
 '''
 efficientnetb4_sfdct_detector.py
 --------------------------------
-Hybrid Spatial–Frequency (block-wise DCT) deepfake detector — the thesis method.
+Hybrid Spatial-Frequency (block-wise DCT) deepfake detector — the thesis method.
 Built ON TOP of DeepfakeBench's EfficientDetector (EfficientNet-B4) by inheritance;
-only features() is overridden, so loss / metrics / classifier / forward are reused.
+only features() (and get_optim_groups) is overridden, so loss / metrics / classifier / forward are reused.
 
-Design (see refine-logs/EXPERIMENT_PLAN.md § FINAL STRATEGY):
-- Spatial stream  : EfficientNet-B4 (reused, pretrained) -> [B,1792,7,7].
-- Frequency stream: ContentDCT on the INPUT image — YCbCr 8x8 block DCT -> log-magnitude
-  band statistics (48-d = 3 channels x 16 zigzag bands), exposed as [B,16,3] band tokens.
-  (PRIMARY, easy, 0 learnable params. QA-DCT quantization-forensic features = later stretch.)
-- Fusion          : GatedCrossAttnFusion — spatial 7x7 grid (Q) cross-attends to the 16 freq
-  band tokens (K/V); per-channel gate `alpha` init 0 => identity at start => can NEVER regress
-  the pretrained B4 baseline (the no-regression guarantee; verified in tools/smoke_sfdct.py).
-
-SETUP:
-  1. Place sfdct_core.py next to this file (already in training/detectors/).
-  2. Register: in training/detectors/__init__.py add
-       from .efficientnetb4_sfdct_detector import EfficientSFDCTDetector
-  3. Train with training/config/detector/efficientnetb4_sfdct.yaml
-NOTE: ContentDCT runs on data_dict['image'] (the model input). drop_dc=True removes the
-DC/mean term so input normalisation does not dominate the band statistics.
+Design (committee-reviewed 2026-06-05; see refine-logs/IMPROVEMENT_PLAN.md):
+- Spatial stream  : EfficientNet-B4 (reused, pretrained) -> [B,1792,8,8] at 256px (stride 32 => 8x8, NOT 7x7).
+- Frequency stream: ContentDCT on the INPUT image — denormalise to [0,1], RGB->YCbCr, 8x8 block DCT ->
+  log-magnitude band statistics (content-spectrum band stats; 0 learnable params). On FF++/Celeb-DF this is
+  a CONTENT-SPECTRUM signal, NOT a JPEG-grid-aligned one (the crop is H.264-sourced + resized).
+- Fusion          : GatedCrossAttnFusion — per-channel gate `alpha` init 0 => identity at init => the model
+  EQUALS plain B4 at initialisation (no-regression AT INIT only; the trained hybrid CAN still underperform
+  the trained baseline). freq_repr global48|blockgrid, fusion_type crossattn|concat (for one-variable ablation).
+- Gate warm-up    : get_optim_groups gives the fusion/gate a higher LR (gate_lr_mult) so the zero-init gate
+  engages instead of staying inert (the diagnosed cause of the prior content-DCT TIE).
 '''
 import logging
 import torch
@@ -40,17 +34,37 @@ class EfficientSFDCTDetector(EfficientDetector):
         c = config.get('dct_channels', 1792)                      # B4 final feature channels
         nbands = config.get('dct_nbands', 16)
         freq_repr = config.get('freq_repr', 'global48')           # 'global48' | 'blockgrid'
-        grid = config.get('dct_grid', 7)                          # block-grid pooled to (grid,grid) == B4 7x7
+        grid = config.get('dct_grid', 8)                          # block-grid -> (grid,grid); 8 == real B4 grid @256
+        fusion_type = config.get('fusion_type', 'crossattn')      # 'crossattn' | 'concat'  (ablation A3)
+        shuffle_bands = config.get('shuffle_bands', False)        # negative control
+        mean = config.get('mean', [0.5, 0.5, 0.5]); std = config.get('std', [0.5, 0.5, 0.5])
+        self.gate_lr_mult = float(config.get('gate_lr_mult', 3.0))
         self.dct = ContentDCT(block=8, nbands=nbands, to_ycbcr=True, drop_dc=True,
-                              freq_repr=freq_repr, grid=grid, channels=3)
+                              freq_repr=freq_repr, grid=grid, channels=3,
+                              input_mean=float(mean[0]), input_std=float(std[0]),
+                              shuffle_bands=shuffle_bands, seed=int(config.get('manualSeed', 0)))
+        n_query = grid * grid if freq_repr == 'blockgrid' else None   # spatial grounding when grids match
         self.fusion = GatedCrossAttnFusion(
             spatial_ch=c, token_in=self.dct.token_in, n_tokens=self.dct.n_tokens,
-            d_model=config.get('fusion_dim', 128), heads=config.get('fusion_heads', 4))
-        logger.info(f'[SFDCT] ContentDCT(freq_repr={freq_repr}, nbands={nbands}) + '
-                    f'GatedCrossAttnFusion(token_in={self.dct.token_in}, n_tokens={self.dct.n_tokens}, '
-                    f'channels={c}); alpha init 0 => starts == EfficientNet-B4 baseline.')
+            d_model=config.get('fusion_dim', 128), heads=config.get('fusion_heads', 4),
+            mode=fusion_type, n_query=n_query)
+        logger.info(f'[SFDCT] ContentDCT(freq_repr={freq_repr}, nbands={nbands}, shuffle_bands={shuffle_bands}) + '
+                    f'GatedCrossAttnFusion(mode={fusion_type}, token_in={self.dct.token_in}, '
+                    f'n_tokens={self.dct.n_tokens}, n_query={n_query}); alpha init 0 => == B4 at init '
+                    f'(no-regression AT INIT only). gate_lr_mult={self.gate_lr_mult}.')
 
     def features(self, data_dict: dict) -> torch.tensor:
-        x = self.backbone.features(data_dict['image'])            # [B,1792,7,7]
-        _, band_tokens = self.dct(data_dict['image'])             # [B,16,3]
+        x = self.backbone.features(data_dict['image'])            # [B,1792,8,8] @256px
+        _, band_tokens = self.dct(data_dict['image'])            # global48: [B,16,3]; blockgrid: [B,grid^2,C*nb]
         return self.fusion(x, band_tokens)                        # gate-0 => == x at init
+
+    def get_optim_groups(self, base_lr):
+        """Gate warm-up: the (zero-init) fusion + gate get a higher LR so they engage; backbone at base_lr.
+        train.py uses this when present (else falls back to model.parameters())."""
+        fusion_params = list(self.fusion.parameters())
+        fusion_ids = {id(p) for p in fusion_params}
+        backbone_params = [p for p in self.parameters() if id(p) not in fusion_ids and p.requires_grad]
+        return [
+            {'params': backbone_params, 'lr': base_lr},
+            {'params': [p for p in fusion_params if p.requires_grad], 'lr': base_lr * self.gate_lr_mult},
+        ]

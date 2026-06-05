@@ -246,6 +246,24 @@ def main():
     config['save_feat'] = args.save_feat
     if config['lmdb']:
         config['dataset_json_folder'] = 'preprocessing/dataset_json_v3'
+    # --- PROTOCOL-FIDELITY GUARD (committee P0-4): the effective dataset_json_folder is decided by the
+    # train_config merge, NOT the detector yaml. Print it + the FF++ train video count and FAIL on the
+    # 25-vid smoke subset, so a full run can never silently train on the wrong data. ---
+    try:
+        import json as _json
+        _jf = os.path.join(config['dataset_json_folder'], 'FaceForensics++.json')
+        _d = _json.load(open(_jf))['FaceForensics++']
+        _nv = {k: len(v.get('train', {}).get('c23', {})) for k, v in _d.items()}
+        _real = _nv.get('FF-real', 0)
+        print(f"[DATA] effective dataset_json_folder={config['dataset_json_folder']} | FF++ train vids/manip={_nv}")
+        if _real < 700 and not config.get('dry_run', False) and config.get('nEpochs', 0) > 1:
+            raise SystemExit(f"[DATA] ABORT: FF-real train has only {_real} videos (<700) -> this is the SMOKE "
+                             f"subset, not the full 719/manip protocol. Set dataset_json_folder to the full json "
+                             f"in training/config/train_config.yaml before a real run.")
+    except SystemExit:
+        raise
+    except Exception as _e:
+        print(f"[DATA] could not verify dataset_json_folder ({type(_e).__name__}: {_e}) -- check the path")
     # create logger
     timenow=datetime.datetime.now().strftime('%Y-%m-%d-%H-%M-%S')
     task_str = f"_{config['task_target']}" if config.get('task_target', None) is not None else ""

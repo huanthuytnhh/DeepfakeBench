@@ -14,8 +14,11 @@ backbone_name: efficientnetb4
 # SFDCT module params (read by EfficientSFDCTDetector / sfdct_core)
 dct_channels: 1792                  # B4 final feature channels -- VERIFY (print feature shape once)
 dct_nbands: 16                      # zigzag bands -> 48-d = 3 channels x 16 bands
-freq_repr: global48                 # 'global48' (16 tokens dim 3) | 'blockgrid' (49 tokens dim 48) -- ablation variant
-dct_grid: 7                         # blockgrid only: pool per-block band map to (grid x grid) == B4 7x7
+freq_repr: global48                 # 'global48' (16 tokens dim 3) | 'blockgrid' (grid^2 tokens dim 48)
+dct_grid: 8                         # blockgrid: pool to (grid x grid); 8 == REAL B4 grid @256px (stride 32), not 7
+fusion_type: crossattn              # 'crossattn' | 'concat'  -- A3 one-variable ablation
+gate_lr_mult: 3.0                   # gate warm-up: fusion/alpha get this x base_lr so the zero-init gate engages
+shuffle_bands: false                # negative control: true => permute bands (same params, no freq semantics)
 fusion_dim: 128                     # cross-attention d_model
 fusion_heads: 4
 
