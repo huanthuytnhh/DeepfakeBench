@@ -31,7 +31,7 @@ push_hf () {  # $1=tag  $2=detector_yaml  $3=run_dir
       --out "viz_out/$tag/training_curve.png" --title "$tag" >> "$OUT/$tag.viz.log" 2>&1 || true
   if [ -n "${HF_TOKEN:-}" ]; then
     echo "  [$tag] pushing model+figures -> HF $REPO/runs/$TS/$tag ..."
-    RUNDIR="$rundir" TAG="$tag" TS="$TS" REPO="$REPO" "$PYBIN" - <<'PY' 2>>"$OUT/$tag.viz.log" || echo "  (HF push failed for $tag, see log)"
+    RUNDIR="$rundir" TAG="$tag" TS="$TS" REPO="$REPO" CFGYAML="$y" "$PYBIN" - <<'PY' 2>>"$OUT/$tag.viz.log" || echo "  (HF push failed for $tag, see log)"
 import os, os.path as osp
 from huggingface_hub import HfApi
 api = HfApi(token=os.environ["HF_TOKEN"]); repo = os.environ["REPO"]
@@ -42,11 +42,15 @@ api.upload_folder(folder_path=rundir, repo_id=repo, repo_type="model",
 if osp.isdir(f"viz_out/{tag}"):
     api.upload_folder(folder_path=f"viz_out/{tag}", repo_id=repo, repo_type="model",
                       path_in_repo=f"runs/{ts}/{tag}/viz")                                       # figures
+cfg = os.environ.get("CFGYAML", "")
+if cfg and osp.isfile(cfg):
+    api.upload_file(path_or_fileobj=cfg, path_in_repo=f"runs/{ts}/{tag}/config.yaml",            # exact arch for infer
+                    repo_id=repo, repo_type="model")
 for lg in (f"logs/ablation_cdfv2/{tag}.train.log", f"logs/ablation_cdfv2/{tag}.viz.log"):        # logs
     if osp.isfile(lg):
         api.upload_file(path_or_fileobj=lg, path_in_repo=f"runs/{ts}/{tag}/{osp.basename(lg)}",
                         repo_id=repo, repo_type="model")
-print(f"  pushed {tag} (model+figures+logs) -> https://huggingface.co/{repo}/tree/main/runs/{ts}/{tag}")
+print(f"  pushed {tag} (model+config+figures+logs) -> https://huggingface.co/{repo}/tree/main/runs/{ts}/{tag}")
 PY
   else
     echo "  [$tag] HF_TOKEN missing -> zipping locally"
