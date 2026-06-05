@@ -22,9 +22,13 @@ push_hf () {  # $1=tag  $2=detector_yaml  $3=run_dir
   local ck="$rundir/test/Celeb-DF-v2/ckpt_best.pth"
   [ -s "$ck" ] || { echo "  !! no ckpt for $tag ($rundir) -> skip viz/push"; return 0; }
   echo "  [$tag] building figures ..."
+  mkdir -p "viz_out/$tag"
   "$PYBIN" training/eval_and_viz.py --detector_path "$y" --weights_path "$ck" \
       --test_dataset FaceForensics++ Celeb-DF-v2 --out "viz_out/$tag" >> "$OUT/$tag.viz.log" 2>&1 \
       || echo "  (viz failed for $tag, continuing)"
+  # training-curve plot (loss / train-AUC / test-CDFv2-AUC vs B4 bar) from the train log -> same viz folder
+  "$PYBIN" tools/plot_training_curve.py --log "$OUT/$tag.train.log" \
+      --out "viz_out/$tag/training_curve.png" --title "$tag" >> "$OUT/$tag.viz.log" 2>&1 || true
   if [ -n "${HF_TOKEN:-}" ]; then
     echo "  [$tag] pushing model+figures -> HF $REPO/runs/$TS/$tag ..."
     RUNDIR="$rundir" TAG="$tag" TS="$TS" REPO="$REPO" "$PYBIN" - <<'PY' 2>>"$OUT/$tag.viz.log" || echo "  (HF push failed for $tag, see log)"
