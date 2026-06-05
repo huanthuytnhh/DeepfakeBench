@@ -162,10 +162,10 @@ def fig_gradcam(model, loader):
     model.zero_grad(); score.backward()
     w = feat.grad.mean((2, 3), keepdim=True)                 # channel weights
     cam = torch.relu((w * feat).sum(1, keepdim=True))        # [1,1,h,w]
-    im = img.detach().cpu()[0].permute(1, 2, 0).numpy(); im = (im - im.min()) / (im.ptp() + 1e-8)
+    im = img.detach().cpu()[0].permute(1, 2, 0).numpy(); im = (im - im.min()) / (np.ptp(im) + 1e-8)
     H, W = im.shape[:2]
     cam = torch.nn.functional.interpolate(cam, size=(H, W), mode="bilinear", align_corners=False)
-    cam = cam[0, 0].detach().cpu().numpy(); cam = (cam - cam.min()) / (cam.ptp() + 1e-8)
+    cam = cam[0, 0].detach().cpu().numpy(); cam = (cam - cam.min()) / (np.ptp(cam) + 1e-8)
     fig, a = plt.subplots(1, 2, figsize=(7, 3.6))
     a[0].imshow(im); a[0].set_title("input (fake)"); a[0].axis("off")
     a[1].imshow(im); a[1].imshow(cam, cmap="jet", alpha=0.45); a[1].set_title("Grad-CAM"); a[1].axis("off")
