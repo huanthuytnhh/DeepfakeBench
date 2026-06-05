@@ -132,11 +132,18 @@ class GatedCrossAttnFusion(nn.Module):
              cross-attention is spatially grounded to the backbone grid.
     """
     def __init__(self, spatial_ch: int = 1792, token_in: int = 3, n_tokens: int = 16,
-                 d_model: int = 128, heads: int = 4, mode: str = "crossattn", n_query: int = None):
+                 d_model: int = 128, heads: int = 4, mode: str = "crossattn", n_query: int = None,
+                 gate_mode: str = "zero"):
         super().__init__()
         assert mode in ("crossattn", "concat")
-        self.mode = mode
-        self.alpha = nn.Parameter(torch.zeros(spatial_ch, 1, 1))          # per-channel gate, init 0 (all modes)
+        assert gate_mode in ("zero", "sigmoid", "const")    # LOAD-BEARING ABLATION (vs SFCL sigmoid / FGINet 0.01)
+        self.mode, self.gate_mode = mode, gate_mode
+        if gate_mode == "zero":                                          # OURS: exact identity at init
+            self.alpha = nn.Parameter(torch.zeros(spatial_ch, 1, 1))
+        elif gate_mode == "sigmoid":                                     # SFCL-style: sigmoid gate -> 0.5 at init (NOT identity)
+            self.gate_lin = nn.Parameter(torch.zeros(spatial_ch, 1, 1))
+        else:                                                            # FGINet-style: fixed alpha=0.01 (approximate)
+            self.register_buffer("alpha_const", torch.tensor(0.01))
         if mode == "crossattn":
             self.q = nn.Linear(spatial_ch, d_model)
             self.kv = nn.Linear(token_in, d_model)
@@ -160,4 +167,7 @@ class GatedCrossAttnFusion(nn.Module):
         else:  # concat: global freq vector broadcast over the grid
             v = self.mlp(freq_tokens.flatten(1))                          # [B, Csp]
             ctx = v[:, :, None, None].expand(B, Csp, H, W)
-        return x + self.alpha * ctx                                       # gate-0 => identity at init
+        if self.gate_mode == "zero":      g = self.alpha                  # 0 at init => identity (OURS)
+        elif self.gate_mode == "sigmoid": g = torch.sigmoid(self.gate_lin)  # 0.5 at init (SFCL-style)
+        else:                             g = self.alpha_const            # 0.01 fixed (FGINet-style)
+        return x + g * ctx                                                # gate_mode='zero' => identity at init

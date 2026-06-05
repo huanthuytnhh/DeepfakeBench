@@ -36,6 +36,7 @@ class EfficientSFDCTDetector(EfficientDetector):
         freq_repr = config.get('freq_repr', 'global48')           # 'global48' | 'blockgrid'
         grid = config.get('dct_grid', 8)                          # block-grid -> (grid,grid); 8 == real B4 grid @256
         fusion_type = config.get('fusion_type', 'crossattn')      # 'crossattn' | 'concat'  (ablation A3)
+        gate_mode = config.get('gate_mode', 'zero')               # 'zero'(ours) | 'sigmoid'(SFCL) | 'const'(FGINet) — load-bearing ablation
         shuffle_bands = config.get('shuffle_bands', False)        # negative control
         mean = config.get('mean', [0.5, 0.5, 0.5]); std = config.get('std', [0.5, 0.5, 0.5])
         self.gate_lr_mult = float(config.get('gate_lr_mult', 3.0))
@@ -47,7 +48,7 @@ class EfficientSFDCTDetector(EfficientDetector):
         self.fusion = GatedCrossAttnFusion(
             spatial_ch=c, token_in=self.dct.token_in, n_tokens=self.dct.n_tokens,
             d_model=config.get('fusion_dim', 128), heads=config.get('fusion_heads', 4),
-            mode=fusion_type, n_query=n_query)
+            mode=fusion_type, n_query=n_query, gate_mode=gate_mode)
         logger.info(f'[SFDCT] ContentDCT(freq_repr={freq_repr}, nbands={nbands}, shuffle_bands={shuffle_bands}) + '
                     f'GatedCrossAttnFusion(mode={fusion_type}, token_in={self.dct.token_in}, '
                     f'n_tokens={self.dct.n_tokens}, n_query={n_query}); alpha init 0 => == B4 at init '
