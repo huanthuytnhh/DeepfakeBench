@@ -99,10 +99,27 @@ PY
   [ -n "${GH_TOKEN:-}" ] && echo "  GH_TOKEN set (figures -> git)." || echo "  (GH_TOKEN not set -> figures stay local + zipped; optional.)"
 }
 
+cmd_hftest(){
+  log "HF push self-test — upload a marker to ${HF_REPO:-huanthuytnhh/deepfake} then delete it (proves the post-train push works)"
+  if [ -z "${HF_TOKEN:-}" ]; then echo "  HF_TOKEN not set -> SKIP (set it so train can auto-push .pth); export HF_TOKEN=hf_xxx"; return 0; fi
+  "$PYBIN" - <<'PY'
+import os, io, time
+from huggingface_hub import HfApi
+api = HfApi(token=os.environ["HF_TOKEN"]); repo = os.environ.get("HF_REPO") or "huanthuytnhh/deepfake"
+p = f"_smoketest/{time.strftime('%Y%m%d-%H%M%S')}.txt"
+api.upload_file(path_or_fileobj=io.BytesIO(b"hf push pipeline ok"), path_in_repo=p, repo_id=repo, repo_type="model")
+ok = p in api.list_repo_files(repo, repo_type="model")
+api.delete_file(path_in_repo=p, repo_id=repo, repo_type="model")
+print(f"  HF push self-test {'PASSED' if ok else 'FAILED'} -> can upload+delete on {repo} (token has write access)")
+import sys; sys.exit(0 if ok else 1)
+PY
+}
+
 cmd_smoke(){
   log "smoke (1 epoch, sfdct) — must finish without import/shape/NaN error and print an AUC"
   "$PYBIN" training/train.py --detector_path "$SFDCT" \
     --train_dataset FaceForensics++ --test_dataset Celeb-DF-v2 --nEpochs 1 2>&1 | tee "$ROOT/smoke.log"
+  cmd_hftest        # also test the HF push pipeline so an upload/token problem fails NOW, not after the 3h train
 }
 
 cmd_train(){
@@ -198,6 +215,7 @@ case "${1:-setup}" in
   data)   cmd_data ;;
   verify) cmd_verify ;;
   smoke)   cmd_smoke ;;
+  hftest)  cmd_hftest ;;
   train)   cmd_train ;;
   viz)     cmd_viz ;;
   results) cmd_results ;;
