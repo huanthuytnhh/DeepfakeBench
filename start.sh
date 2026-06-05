@@ -166,9 +166,11 @@ PY
 }
 
 cmd_smoke(){
-  log "smoke (1 epoch, sfdct) — must finish without import/shape/NaN error and print an AUC"
-  "$PYBIN" training/train.py --detector_path "$SFDCT" \
-    --train_dataset FaceForensics++ --test_dataset Celeb-DF-v2 --nEpochs 1 2>&1 | tee "$ROOT/smoke.log"
+  log "smoke — 1 epoch, 4 frames/vid (fast). train.py has NO --nEpochs, so override via a temp yaml copy."
+  cp "$SFDCT" /tmp/sfdct_smoke.yaml
+  sed -i "s/^nEpochs:.*/nEpochs: 1/; s/^frame_num:.*/frame_num: {'train': 4, 'test': 4}/" /tmp/sfdct_smoke.yaml
+  "$PYBIN" training/train.py --detector_path /tmp/sfdct_smoke.yaml \
+    --train_dataset FaceForensics++ --test_dataset Celeb-DF-v2 2>&1 | tee "$ROOT/smoke.log"
   cmd_hftest        # also test the HF push pipeline so an upload/token problem fails NOW, not after the 3h train
 }
 
