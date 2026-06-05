@@ -22,6 +22,8 @@ gate_lr_mult: 3.0                   # gate warm-up: fusion/alpha get this x base
 shuffle_bands: false                # negative control: true => permute bands (same params, no freq semantics)
 dct_drop_low_bands: 0               # LEVER #1 (anti content-leakage): 0=drop DC only | k=drop DC + (k-1) lowest AC bands.
                                     # Sweep k in {1,2,3,4} on FF++-VAL (not test) for the improved method; emphasises mid/high forgery cues.
+dct_use_sign: false                 # S1 (adapt SPSL +1.63): true => append per-band DCT coeff SIGN (phase-analog) to magnitude stats
+dct_srm_residual: false             # S2 (adapt SRM +0.65): true => run block-DCT on SRM high-pass noise residual instead of YCbCr image
 fusion_dim: 128                     # cross-attention d_model
 fusion_heads: 4
 

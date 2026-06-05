@@ -54,6 +54,32 @@ def zigzag_band_of(n: int = 8, nbands: int = 16) -> torch.Tensor:
     return band_of
 
 
+# 3 fixed SRM high-pass steganalysis filters (Fridrich & Kodovsky / RGB-N) — 0 learnable params.
+_SRM_K = torch.tensor([
+    [[0, 0, 0, 0, 0], [0, -1, 2, -1, 0], [0, 2, -4, 2, 0], [0, -1, 2, -1, 0], [0, 0, 0, 0, 0]],
+    [[-1, 2, -2, 2, -1], [2, -6, 8, -6, 2], [-2, 8, -12, 8, -2], [2, -6, 8, -6, 2], [-1, 2, -2, 2, -1]],
+    [[0, 0, 0, 0, 0], [0, 0, 0, 0, 0], [0, 1, -2, 1, 0], [0, 0, 0, 0, 0], [0, 0, 0, 0, 0]],
+], dtype=torch.float32)
+_SRM_NORM = torch.tensor([4.0, 12.0, 2.0]).view(3, 1, 1)
+
+
+class SRMHighPass(nn.Module):
+    """S2 (adapt SRM, arXiv:2103.12376, +0.65 CDFv2 in DeepfakeBench): 3 fixed high-pass steganalysis
+    filters on luma -> 3-channel NOISE residual (0 learnable params). Feed as the DCT-branch input so the
+    block-DCT describes the spectrum of the forgery noise residual (generalisable) instead of raw content."""
+    def __init__(self, input_mean: float = 0.5, input_std: float = 0.5):
+        super().__init__()
+        self.register_buffer("k", (_SRM_K / _SRM_NORM).unsqueeze(1))           # [3,1,5,5]
+        self.register_buffer("luma", torch.tensor([0.299, 0.587, 0.114]).view(1, 3, 1, 1))
+        self.register_buffer("input_mean", torch.tensor(float(input_mean)))
+        self.register_buffer("input_std", torch.tensor(float(input_std)))
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        x = (x * self.input_std + self.input_mean).clamp(0.0, 1.0)             # denorm to [0,1]
+        y = (x * self.luma.to(x.dtype)).sum(1, keepdim=True)                   # luma [B,1,H,W]
+        return torch.nn.functional.conv2d(y, self.k.to(x.dtype), padding=2)    # [B,3,H,W] residuals
+
+
 class ContentDCT(nn.Module):
     """Block-wise 8x8 DCT content-spectrum front-end (0 learnable params). Returns (flat, kv_tokens).
 
@@ -65,7 +91,7 @@ class ContentDCT(nn.Module):
     def __init__(self, block: int = 8, nbands: int = 16, to_ycbcr: bool = True,
                  drop_dc: bool = True, freq_repr: str = "global48", grid: int = 8, channels: int = 3,
                  input_mean: float = 0.5, input_std: float = 0.5, shuffle_bands: bool = False, seed: int = 0,
-                 drop_low_bands: int = 0):
+                 drop_low_bands: int = 0, use_sign: bool = False, srm_residual: bool = False):
         super().__init__()
         assert freq_repr in ("global48", "blockgrid")
         self.block, self.nbands, self.to_ycbcr, self.drop_dc = block, nbands, to_ycbcr, drop_dc
@@ -73,6 +99,10 @@ class ContentDCT(nn.Module):
         # (the #1 reason naive DCT-band decomposition fails cross-dataset; emphasises mid/high forgery cues).
         # Falls back to drop_dc (k=1 effective) when drop_low_bands==0 for backward compatibility.
         self.drop_low_bands = int(drop_low_bands)
+        # S1 (adapt SPSL): append per-band mean SIGN of DCT coeffs (phase-analog) to the magnitude stats.
+        # SPSL wins cross-dataset by KEEPING phase; magnitude-only ContentDCT discards exactly that cue.
+        self.use_sign = bool(use_sign)
+        feat_bands = nbands * (2 if self.use_sign else 1)
         self.freq_repr, self.grid = freq_repr, grid
         self.register_buffer("M", dct_matrix(block))
         band = zigzag_band_of(block, nbands).reshape(-1)                  # [64]
@@ -83,15 +113,21 @@ class ContentDCT(nn.Module):
         self.register_buffer("rgb2ycbcr", _RGB2YCBCR.clone())
         self.register_buffer("input_mean", torch.tensor(float(input_mean)))
         self.register_buffer("input_std", torch.tensor(float(input_std)))
-        self.token_in = channels if freq_repr == "global48" else channels * nbands
-        self.n_tokens = nbands if freq_repr == "global48" else grid * grid
+        # S2 (adapt SRM): when on, run block-DCT on the SRM noise residual instead of the YCbCr image.
+        self.srm = SRMHighPass(input_mean, input_std) if srm_residual else None
+        self.feat_bands = feat_bands
+        self.token_in = channels if freq_repr == "global48" else channels * feat_bands
+        self.n_tokens = feat_bands if freq_repr == "global48" else grid * grid
 
     def _block_dct_logmag(self, x):
-        """x[B,3,H,W] (model input) -> logmag[B,C,nblocks,64], plus (nh,nw)."""
+        """x[B,3,H,W] (model input) -> logmag[B,C,nblocks,64], sign[B,C,nblocks,64], (nh,nw)."""
         b = self.block
-        x = (x * self.input_std + self.input_mean).clamp(0.0, 1.0)        # denorm to pixel [0,1] before YCbCr
-        if self.to_ycbcr:
-            x = torch.einsum("ij,njhw->nihw", self.rgb2ycbcr.to(x.dtype), x)
+        if self.srm is not None:
+            x = self.srm(x)                                              # S2: block-DCT on SRM noise residual (no YCbCr)
+        else:
+            x = (x * self.input_std + self.input_mean).clamp(0.0, 1.0)    # denorm to pixel [0,1] before YCbCr
+            if self.to_ycbcr:
+                x = torch.einsum("ij,njhw->nihw", self.rgb2ycbcr.to(x.dtype), x)
         B, C, H, W = x.shape
         ph, pw = (b - H % b) % b, (b - W % b) % b
         if ph or pw:
@@ -100,7 +136,8 @@ class ContentDCT(nn.Module):
         blk = x.unfold(2, b, b).unfold(3, b, b)                            # [B,C,nh,nw,8,8]
         coef = torch.einsum("pa,ncijab,qb->ncijpq", self.M, blk, self.M)   # [B,C,nh,nw,8,8]
         logmag = torch.log1p(coef.abs()).reshape(B, C, nh * nw, b * b)     # [B,C,nblocks,64]
-        return logmag, nh, nw
+        sign = coef.sign().reshape(B, C, nh * nw, b * b)                   # S1: phase-analog (DCT coeff sign)
+        return logmag, sign, nh, nw
 
     def _bands(self, logmag):
         B, C, N, _ = logmag.shape
@@ -115,16 +152,18 @@ class ContentDCT(nn.Module):
         return out                                                          # [B,C,nblocks,nbands]
 
     def forward(self, x: torch.Tensor):
-        logmag, nh, nw = self._block_dct_logmag(x)
+        logmag, sign, nh, nw = self._block_dct_logmag(x)
         perblk = self._bands(logmag)                                        # [B,C,nblocks,nbands]
-        B, C, N, K = perblk.shape
-        flat = perblk.mean(2).reshape(B, C * K)                             # [B, C*nbands] global (aux)
+        if self.use_sign:
+            perblk = torch.cat([perblk, self._bands(sign)], dim=3)          # S1: + per-band mean sign -> [..,2*nbands]
+        B, C, N, K = perblk.shape                                           # K == self.feat_bands
+        flat = perblk.mean(2).reshape(B, C * K)                             # [B, C*feat_bands] global (aux)
         if self.freq_repr == "global48":
-            tokens = perblk.mean(2).transpose(1, 2).contiguous()           # [B, nbands, C]
+            tokens = perblk.mean(2).transpose(1, 2).contiguous()           # [B, feat_bands, C]
         else:  # blockgrid: keep block layout, pool to (grid x grid)
             grid_map = perblk.reshape(B, C, nh, nw, K).permute(0, 1, 4, 2, 3).reshape(B, C * K, nh, nw)
             grid_map = nn.functional.adaptive_avg_pool2d(grid_map, (self.grid, self.grid))  # [B,C*K,g,g]
-            tokens = grid_map.flatten(2).transpose(1, 2).contiguous()      # [B, g*g, C*K]
+            tokens = grid_map.flatten(2).transpose(1, 2).contiguous()      # [B, g*g, C*feat_bands]
         return flat, tokens
 
 

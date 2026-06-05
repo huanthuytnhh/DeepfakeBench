@@ -40,13 +40,15 @@ class EfficientSFDCTDetector(EfficientDetector):
         gate_mode = config.get('gate_mode', 'zero')               # 'zero'(ours) | 'sigmoid'(SFCL) | 'const'(FGINet) — load-bearing ablation
         shuffle_bands = config.get('shuffle_bands', False)        # negative control
         drop_low_bands = int(config.get('dct_drop_low_bands', 0))  # 0=drop DC only; k>0=drop DC + (k-1) low AC bands (anti content-leakage)
+        use_sign = bool(config.get('dct_use_sign', False))         # S1 (adapt SPSL): + DCT coeff sign (phase-analog)
+        srm_residual = bool(config.get('dct_srm_residual', False)) # S2 (adapt SRM): block-DCT on SRM noise residual
         mean = config.get('mean', [0.5, 0.5, 0.5]); std = config.get('std', [0.5, 0.5, 0.5])
         self.gate_lr_mult = float(config.get('gate_lr_mult', 3.0))
         self.dct = ContentDCT(block=8, nbands=nbands, to_ycbcr=True, drop_dc=True,
                               freq_repr=freq_repr, grid=grid, channels=3,
                               input_mean=float(mean[0]), input_std=float(std[0]),
                               shuffle_bands=shuffle_bands, seed=int(config.get('manualSeed', 0)),
-                              drop_low_bands=drop_low_bands)
+                              drop_low_bands=drop_low_bands, use_sign=use_sign, srm_residual=srm_residual)
         n_query = grid * grid if freq_repr == 'blockgrid' else None   # spatial grounding when grids match
         self.fusion = GatedCrossAttnFusion(
             spatial_ch=c, token_in=self.dct.token_in, n_tokens=self.dct.n_tokens,
@@ -60,7 +62,8 @@ class EfficientSFDCTDetector(EfficientDetector):
         self.fomixup_cls_w = float(config.get('fomixup_cls_w', 1.0))       # CE on the mixed view
         self.fomixup_consist_w = float(config.get('fomixup_consist_w', 1.0))   # symmetric-KL prob consistency
         self.fomixup_feat_w = float(config.get('fomixup_feat_w', 0.1))     # pooled-feature consistency (MSE)
-        logger.info(f'[SFDCT] ContentDCT(freq_repr={freq_repr}, nbands={nbands}, drop_low_bands={drop_low_bands}, shuffle_bands={shuffle_bands}) + '
+        logger.info(f'[SFDCT] ContentDCT(freq_repr={freq_repr}, nbands={nbands}, drop_low_bands={drop_low_bands}, '
+                    f'use_sign={use_sign}, srm_residual={srm_residual}, shuffle_bands={shuffle_bands}) + '
                     f'GatedCrossAttnFusion(mode={fusion_type}, token_in={self.dct.token_in}, '
                     f'n_tokens={self.dct.n_tokens}, n_query={n_query}); alpha init 0 => == B4 at init '
                     f'(no-regression AT INIT only). gate_lr_mult={self.gate_lr_mult}. '
