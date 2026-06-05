@@ -31,7 +31,9 @@ log(){ printf '\n\033[1;36m== %s ==\033[0m\n' "$*"; }
 
 cmd_setup(){
   log "deps (image's CUDA torch + the rest; uses uv = fast parallel resolver, falls back to pip)"
-  PKGS="gdown tensorboard lmdb efficientnet_pytorch albumentations==1.3.1 opencv-python-headless imgaug scikit-image scikit-learn pandas tqdm pyyaml imageio einops kornia timm huggingface_hub hf_transfer"
+  # NOTE: do NOT install imgaug — it uses np.sctypes (removed in NumPy 2.0, which torch 2.11 ships) and crashes.
+  # albumentations 1.3.1 wraps the imgaug import in try/except -> falls back to stubs; our aug uses no imgaug transform.
+  PKGS="gdown tensorboard lmdb efficientnet_pytorch albumentations==1.3.1 opencv-python-headless scikit-image scikit-learn pandas tqdm pyyaml imageio einops kornia timm huggingface_hub hf_transfer"
   pip install -q -U uv >/dev/null 2>&1 || true
   if command -v uv >/dev/null 2>&1; then
     uv pip install --python "$PYBIN" $PKGS || pip install -q $PKGS    # uv: seconds, not minutes
