@@ -293,16 +293,21 @@ cmd_all(){
   # SEEDS env overrides seeds (default 1024). RUN_B4=1 ./start.sh all  -> also (re)train B4 here.
   command -v tmux >/dev/null 2>&1 || { apt-get update -qq && apt-get install -y -qq tmux >/dev/null 2>&1; } || true
   local seeds="${SEEDS:-1024}"
-  tmux new -d -s thesis "cd $ROOT && export HF_TOKEN='${HF_TOKEN:-}' GH_TOKEN='${GH_TOKEN:-}' HF_REPO='${HF_REPO:-}' RUN_B4='${RUN_B4:-0}' && \
-    ./start.sh setup && ./start.sh data && ./start.sh verify && ./start.sh smoke && \
-    echo '== FULL TRAIN: Row1 + Row2 -> figures -> HF (B4 reused, not retrained) ==' && \
-    bash tools/run_improved_ablation.sh '$seeds' 2>&1 | tee $ROOT/pipeline.log; \
-    echo '== PIPELINE DONE =='"
-  echo "launched tmux 'thesis' = FULL pipeline (setup -> data -> verify -> smoke -> Row1+Row2 -> figures -> HF push)."
-  echo "  ~9h for 2 runs @1 seed on a single GPU. Model(.pth)+figures+logs+summary auto-push to HF huanthuytnhh/deepfake. (B4 reused)"
-  echo "  watch:  tmux attach -t thesis        (detach without killing: Ctrl-b then d)"
-  echo "  peek:   tmux capture-pane -t thesis -p | tail -40"
+  local CHAIN="cd $ROOT && export HF_TOKEN='${HF_TOKEN:-}' GH_TOKEN='${GH_TOKEN:-}' HF_REPO='${HF_REPO:-}' RUN_B4='${RUN_B4:-0}' && ./start.sh setup && ./start.sh data && ./start.sh verify && ./start.sh smoke && echo '== FULL TRAIN: Row1 + Row2 -> figures -> HF (B4 reused) ==' && bash tools/run_improved_ablation.sh '$seeds'"
   [ -z "${HF_TOKEN:-}" ] && echo "  !! HF_TOKEN not set -> results will ZIP to /workspace instead of HF. export it BEFORE ./start.sh all."
+  if command -v tmux >/dev/null 2>&1; then
+    tmux new -d -s thesis "$CHAIN 2>&1 | tee $ROOT/pipeline.log; echo '== PIPELINE DONE =='"
+    sleep 1
+    if tmux has-session -t thesis 2>/dev/null; then     # VERIFY it actually started (don't lie)
+      echo "launched tmux 'thesis' = FULL pipeline (setup -> data -> verify -> smoke -> Row1+Row2 -> figures -> HF push). ~9h."
+      echo "  watch:  tmux capture-pane -t thesis -p | tail -40     (attach: tmux attach -t thesis ; detach: Ctrl-b d)"
+      return 0
+    fi
+  fi
+  # tmux missing or failed -> nohup fallback (also survives SSH disconnect)
+  echo "tmux unavailable -> running via nohup (survives disconnect)."
+  nohup bash -c "$CHAIN" > "$ROOT/pipeline.log" 2>&1 &
+  echo "  started PID $! = FULL pipeline. ~9h. watch:  tail -f $ROOT/pipeline.log"
 }
 
 case "${1:-setup}" in
