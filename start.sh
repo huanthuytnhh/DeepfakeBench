@@ -246,7 +246,7 @@ cmd_viz(){
   log "result figures from the newest checkpoints"
   for cfg in "$REPRO:repro" "$SFDCT:sfdct"; do
     y="${cfg%%:*}"; tag="${cfg##*:}"; mdl=$(grep -E '^model_name:' "$y" | awk '{print $2}')
-    ck=$(ls -t logs/training/${mdl}_*/test/Celeb-DF-v2/ckpt_best.pth 2>/dev/null | head -1)
+    ck=$(ls -t logs/training/${mdl}_2*/test/Celeb-DF-v2/ckpt_best.pth 2>/dev/null | head -1)   # _2* = timestamp-anchored: efficientnetb4_2* won't match efficientnetb4_sfdct_*
     [ -z "$ck" ] && { echo "no ckpt for $tag ($mdl) yet"; continue; }
     "$PYBIN" training/eval_and_viz.py --detector_path "$y" --weights_path "$ck" \
       --test_dataset FaceForensics++ Celeb-DF-v2 --out "./viz_out/$tag"
@@ -271,7 +271,7 @@ repo = os.environ.get("HF_REPO") or "huanthuytnhh/deepfake"
 api.create_repo(repo, repo_type="model", exist_ok=True)  # no-op if it exists; keeps its current visibility
 ts = time.strftime("%Y%m%d-%H%M%S"); up = 0
 for mdl in ("efficientnetb4", "efficientnetb4_sfdct"):
-    cks = sorted(glob.glob(f"logs/training/{mdl}_*/test/Celeb-DF-v2/ckpt_best.pth"), key=osp.getmtime)
+    cks = sorted(glob.glob(f"logs/training/{mdl}_2*/test/Celeb-DF-v2/ckpt_best.pth"), key=osp.getmtime)  # _2* anchors timestamp: efficientnetb4_2* excludes efficientnetb4_sfdct_*
     if not cks:
         print("no ckpt for", mdl); continue
     api.upload_folder(folder_path=osp.dirname(cks[-1]), repo_id=repo, repo_type="model",
