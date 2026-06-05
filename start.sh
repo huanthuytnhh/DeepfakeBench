@@ -86,10 +86,19 @@ PY
       [ -d "$DATAROOT/Celeb-DF-v2" ]     || gdown "$DATA_CDF_ID" ) || true
   fi
   ( cd "$DATAROOT"; shopt -s nullglob
-    for f in *.zip;              do echo "unzip $f"; unzip -qn "$f"; done
+    for f in *.zip; do
+      name="${f%.zip}"                                   # Celeb-DF-v2 | FaceForensics++
+      first="$(unzip -Z1 "$f" 2>/dev/null | head -1)"    # first entry in the archive
+      case "$first" in
+        "$name"/*) echo "unzip $f (has $name/ wrapper) -> flat";  unzip -qn "$f" ;;
+        *)         echo "unzip $f (no wrapper) -> datasets/$name/"; mkdir -p "$name"; unzip -qn "$f" -d "$name" ;;
+      esac
+    done
     for f in *.tar *.tar.gz *.tgz; do echo "untar $f"; tar xf "$f"; done )
   echo "== datasets/ after extract =="; ls -la "$DATAROOT"
-  [ -d "$DATAROOT/FaceForensics++" ] && echo "FaceForensics++/ OK" || echo "⚠️ no FaceForensics++/ — check zip layout (may need to move folders)"
+  for n in "FaceForensics++" "Celeb-DF-v2"; do
+    [ -d "$DATAROOT/$n" ] && echo "$n/ OK" || echo "⚠️ no $n/ — zip layout wrong"
+  done
 }
 
 cmd_data_to_hf(){
