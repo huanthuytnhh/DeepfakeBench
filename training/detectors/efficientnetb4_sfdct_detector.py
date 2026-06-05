@@ -23,7 +23,7 @@ import torch.nn.functional as F
 
 from detectors import DETECTOR
 from .efficientnetb4_detector import EfficientDetector
-from .sfdct_core import ContentDCT, GatedCrossAttnFusion, DCTFoMixup
+from .sfdct_core import ContentDCT, GatedCrossAttnFusion, DCTFoMixup, SingleCenterLoss
 
 logger = logging.getLogger(__name__)
 
@@ -62,6 +62,17 @@ class EfficientSFDCTDetector(EfficientDetector):
         self.fomixup_cls_w = float(config.get('fomixup_cls_w', 1.0))       # CE on the mixed view
         self.fomixup_consist_w = float(config.get('fomixup_consist_w', 1.0))   # symmetric-KL prob consistency
         self.fomixup_feat_w = float(config.get('fomixup_feat_w', 0.1))     # pooled-feature consistency (MSE)
+        # --- Row 2 levers (learnable; trade 0-param for higher AUC) ---
+        # S4 (adapt FcaNet): learnable multi-spectral DCT channel attention on the spatial trunk -> learns WHICH
+        # DCT frequencies matter (vs Row-1 fixed bands). channel must be divisible by num_freq (1792/16=112 OK).
+        self.fca = None
+        if bool(config.get('dct_fca_attention', False)):
+            from networks.fca_layer import MultiSpectralAttentionLayer
+            self.fca = MultiSpectralAttentionLayer(c, 7, 7, reduction=16, freq_sel_method='top16')
+        # S5 (adapt FDFL): single-center loss on the pooled fused embedding (tighter real/fake cross-dataset).
+        self.scl = SingleCenterLoss(c, margin=float(config.get('scl_margin', 0.3))) \
+            if bool(config.get('use_single_center_loss', False)) else None
+        self.scl_w = float(config.get('scl_weight', 0.3))
         logger.info(f'[SFDCT] ContentDCT(freq_repr={freq_repr}, nbands={nbands}, drop_low_bands={drop_low_bands}, '
                     f'use_sign={use_sign}, srm_residual={srm_residual}, shuffle_bands={shuffle_bands}) + '
                     f'GatedCrossAttnFusion(mode={fusion_type}, token_in={self.dct.token_in}, '
@@ -72,6 +83,8 @@ class EfficientSFDCTDetector(EfficientDetector):
 
     def features(self, data_dict: dict) -> torch.tensor:
         x = self.backbone.features(data_dict['image'])            # [B,1792,8,8] @256px
+        if self.fca is not None:
+            x = self.fca(x)                                       # S4: learnable multi-spectral DCT channel attention
         _, band_tokens = self.dct(data_dict['image'])            # global48: [B,16,3]; blockgrid: [B,grid^2,C*nb]
         return self.fusion(x, band_tokens)                        # gate-0 => == x at init
 
@@ -91,8 +104,11 @@ class EfficientSFDCTDetector(EfficientDetector):
     def get_losses(self, data_dict: dict, pred_dict: dict) -> dict:
         label = data_dict['label']
         cls_loss = self.loss_func(pred_dict['cls'], label)
-        if 'cls_aug' not in pred_dict:                            # eval / fomixup off -> plain CE (== baseline)
-            return {'overall': cls_loss}
+        scl = self.scl(pred_dict['feat'].mean(dim=(2, 3)), label) if self.scl is not None else None  # S5
+        if 'cls_aug' not in pred_dict:                            # eval / fomixup off -> CE (+SCL if on)
+            if scl is None:
+                return {'overall': cls_loss}
+            return {'overall': cls_loss + self.scl_w * scl, 'cls': cls_loss, 'scl': scl}
         cls_aug = self.loss_func(pred_dict['cls_aug'], label)     # same labels (Fo-Mixup preserves identity-label)
         lp = F.log_softmax(pred_dict['cls'], dim=1)
         lq = F.log_softmax(pred_dict['cls_aug'], dim=1)
@@ -102,8 +118,12 @@ class EfficientSFDCTDetector(EfficientDetector):
                                   pred_dict['feat'].mean(dim=(2, 3)))      # global embedding consistency
         overall = (cls_loss + self.fomixup_cls_w * cls_aug
                    + self.fomixup_consist_w * consist + self.fomixup_feat_w * feat_consist)
-        return {'overall': overall, 'cls': cls_loss, 'cls_aug': cls_aug,
-                'consist': consist, 'feat_consist': feat_consist}
+        out = {'overall': overall, 'cls': cls_loss, 'cls_aug': cls_aug,
+               'consist': consist, 'feat_consist': feat_consist}
+        if scl is not None:                                       # S5: + single-center loss
+            out['overall'] = overall + self.scl_w * scl
+            out['scl'] = scl
+        return out
 
     def get_optim_groups(self, base_lr):
         """Gate warm-up: the (zero-init) fusion + gate get a higher LR so they engage; backbone at base_lr.

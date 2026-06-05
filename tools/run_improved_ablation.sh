@@ -9,7 +9,9 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
-SEEDS="${1:-1024 2025 7 42 123}"
+# Default = 1 seed => the "2 new runs": Row1 + Row2. Pass more seeds to expand (e.g. "1024 2025 7").
+# B4 baseline is REUSED from the existing run by default; set RUN_B4=1 to (re)train it here too.
+SEEDS="${1:-1024}"
 B4="training/config/detector/efficientnetb4.yaml"
 SFDCT="training/config/detector/efficientnetb4_sfdct.yaml"
 OUT="logs/ablation_cdfv2"; mkdir -p "$OUT" /tmp/abl
@@ -27,11 +29,14 @@ run_one () {  # $1=base_yaml  $2=tag  $3=seed  $4=extra_sed(optional)
 }
 
 for s in $SEEDS; do
-  # baseline B4 (same pipeline)
-  run_one "$B4" "b4" "$s"
-  # SFDCT improved: S1 DCT-sign + S2 SRM-residual + S3 Fo-Mixup/consistency + drop-low-bands (all levers ON)
-  run_one "$SFDCT" "sfdct_improved" "$s" \
+  # optional: re-train B4 baseline here (default OFF -> reuse the existing B4 run)
+  [ "${RUN_B4:-0}" = "1" ] && run_one "$B4" "b4" "$s"
+  # ROW 1 = hand-designed frequency: S1 DCT-sign + S2 SRM-residual + S3 Fo-Mixup + drop-low-bands (0-param branch)
+  run_one "$SFDCT" "row1_sfdct" "$s" \
     "s/^use_dct_fomixup:.*/use_dct_fomixup: true/; s/^dct_drop_low_bands:.*/dct_drop_low_bands: 3/; s/^dct_use_sign:.*/dct_use_sign: true/; s/^dct_srm_residual:.*/dct_srm_residual: true/"
+  # ROW 2 = learned frequency: S4 FcaNet learnable DCT attention + S5 single-center loss + S3 Fo-Mixup
+  run_one "$SFDCT" "row2_sfdct_v2" "$s" \
+    "s/^use_dct_fomixup:.*/use_dct_fomixup: true/; s/^dct_drop_low_bands:.*/dct_drop_low_bands: 3/; s/^dct_fca_attention:.*/dct_fca_attention: true/; s/^use_single_center_loss:.*/use_single_center_loss: true/"
 done
 
 echo; echo "================ Celeb-DF-v2 cross-test AUC ================"

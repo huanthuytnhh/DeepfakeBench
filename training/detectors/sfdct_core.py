@@ -260,3 +260,21 @@ class GatedCrossAttnFusion(nn.Module):
         elif self.gate_mode == "sigmoid": g = torch.sigmoid(self.gate_lin)  # 0.5 at init (SFCL-style)
         else:                             g = self.alpha_const            # 0.01 fixed (FGINet-style)
         return x + g * ctx                                                # gate_mode='zero' => identity at init
+
+
+class SingleCenterLoss(nn.Module):
+    """S5 (adapt FDFL, arXiv:2103.09096): pull the REAL class to a learnable center C and push FAKE samples
+    at least a margin farther -> a tighter, more transferable real/fake boundary cross-dataset.
+    label convention: 0=real, 1=fake. feat: [B, D] pooled embedding. Adds 1 learnable vector (D params)."""
+    def __init__(self, feat_dim: int, margin: float = 0.3):
+        super().__init__()
+        self.C = nn.Parameter(torch.randn(feat_dim) * 0.01)
+        self.margin = float(margin)
+
+    def forward(self, feat: torch.Tensor, label: torch.Tensor) -> torch.Tensor:
+        d = torch.norm(feat - self.C, dim=1)                              # [B] L2 distance to center
+        real, fake = (label == 0), (label == 1)
+        m_nat = d[real].mean() if real.any() else feat.new_tensor(0.0)    # mean dist of real to C
+        m_man = d[fake].mean() if fake.any() else feat.new_tensor(0.0)    # mean dist of fake to C
+        margin = self.margin * (feat.shape[1] ** 0.5)                     # scale margin by sqrt(D) (FDFL)
+        return m_nat + torch.relu(m_nat - m_man + margin)                 # compact real + separate fake by margin

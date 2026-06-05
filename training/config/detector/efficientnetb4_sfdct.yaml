@@ -36,6 +36,12 @@ fomixup_cls_w: 1.0                  # CE weight on the mixed view
 fomixup_consist_w: 1.0              # symmetric-KL prob consistency weight (lambda)
 fomixup_feat_w: 0.1                 # pooled-embedding consistency (MSE) weight
 
+# >>> ROW 2 levers (learnable; trade 0-param for higher AUC). OFF by default. <<<
+dct_fca_attention: false           # S4 (adapt FcaNet): learnable multi-spectral DCT channel attention on B4 trunk
+use_single_center_loss: false      # S5 (adapt FDFL): single-center loss -> tighter real/fake cross-dataset
+scl_weight: 0.3                    # single-center loss weight
+scl_margin: 0.3                    # single-center margin (scaled by sqrt(D) internally)
+
 # backbone setting
 backbone_config:
   num_classes: 2
