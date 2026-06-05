@@ -13,7 +13,7 @@ SEEDS="${1:-1024}"          # default = 1 seed -> the "2 new runs" (Row1 + Row2)
 SFDCT="training/config/detector/efficientnetb4_sfdct.yaml"
 B4="training/config/detector/efficientnetb4.yaml"
 REPO="${HF_REPO:-huanthuytnhh/deepfake}"
-TS="$(date +%Y%m%d-%H%M%S)"
+TS="improved-$(date +%Y%m%d-%H%M%S)"   # prefix -> runs/improved-<ts>/ : visually separate from the naive run's runs/<ts>/
 OUT="logs/ablation_cdfv2"; mkdir -p "$OUT" /tmp/abl viz_out
 PYBIN="${PYBIN:-python}"; command -v "$PYBIN" >/dev/null 2>&1 || PYBIN=python3
 
