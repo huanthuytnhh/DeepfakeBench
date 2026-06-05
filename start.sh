@@ -29,10 +29,14 @@ SFDCT="./training/config/detector/efficientnetb4_sfdct.yaml"
 log(){ printf '\n\033[1;36m== %s ==\033[0m\n' "$*"; }
 
 cmd_setup(){
-  log "deps (uses the image's CUDA torch; installs the rest)"
-  pip install -q -U gdown
-  pip install -q tensorboard simplejson efficientnet_pytorch albumentations opencv-python-headless imgaug \
-                 scikit-image scikit-learn pandas tqdm pyyaml imageio einops kornia timm huggingface_hub || true
+  log "deps (image's CUDA torch + the rest; uses uv = fast parallel resolver, falls back to pip)"
+  PKGS="gdown tensorboard efficientnet_pytorch albumentations opencv-python-headless imgaug scikit-image scikit-learn pandas tqdm pyyaml imageio einops kornia timm huggingface_hub"
+  pip install -q -U uv >/dev/null 2>&1 || true
+  if command -v uv >/dev/null 2>&1; then
+    uv pip install --python "$PYBIN" $PKGS || pip install -q $PKGS    # uv: seconds, not minutes
+  else
+    pip install -q $PKGS || true
+  fi
   "$PYBIN" -c "import torch; assert torch.cuda.is_available(),'no CUDA'; x=torch.randn(64,64,device='cuda'); _=(x@x).sum().item(); print('torch',torch.__version__,'| cuda',torch.version.cuda,'|',torch.cuda.get_device_name(0),'-> CUDA op OK')" \
     || { echo '!! torch cannot run on this GPU (RTX 50-series/Blackwell sm_120 needs torch>=2.6 + cu126/cu128).'; \
          echo '   Fix: pip install -U torch torchvision --index-url https://download.pytorch.org/whl/cu126'; exit 1; }
