@@ -31,7 +31,7 @@ log(){ printf '\n\033[1;36m== %s ==\033[0m\n' "$*"; }
 
 cmd_setup(){
   log "deps (image's CUDA torch + the rest; uses uv = fast parallel resolver, falls back to pip)"
-  PKGS="gdown tensorboard efficientnet_pytorch albumentations opencv-python-headless imgaug scikit-image scikit-learn pandas tqdm pyyaml imageio einops kornia timm huggingface_hub hf_transfer"
+  PKGS="gdown tensorboard lmdb efficientnet_pytorch albumentations opencv-python-headless imgaug scikit-image scikit-learn pandas tqdm pyyaml imageio einops kornia timm huggingface_hub hf_transfer"
   pip install -q -U uv >/dev/null 2>&1 || true
   if command -v uv >/dev/null 2>&1; then
     uv pip install --python "$PYBIN" $PKGS || pip install -q $PKGS    # uv: seconds, not minutes
