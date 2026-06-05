@@ -64,10 +64,15 @@ class ContentDCT(nn.Module):
     """
     def __init__(self, block: int = 8, nbands: int = 16, to_ycbcr: bool = True,
                  drop_dc: bool = True, freq_repr: str = "global48", grid: int = 8, channels: int = 3,
-                 input_mean: float = 0.5, input_std: float = 0.5, shuffle_bands: bool = False, seed: int = 0):
+                 input_mean: float = 0.5, input_std: float = 0.5, shuffle_bands: bool = False, seed: int = 0,
+                 drop_low_bands: int = 0):
         super().__init__()
         assert freq_repr in ("global48", "blockgrid")
         self.block, self.nbands, self.to_ycbcr, self.drop_dc = block, nbands, to_ycbcr, drop_dc
+        # drop_low_bands>0: zero the DC + (k-1) lowest zigzag AC bands -> suppress content/identity leakage
+        # (the #1 reason naive DCT-band decomposition fails cross-dataset; emphasises mid/high forgery cues).
+        # Falls back to drop_dc (k=1 effective) when drop_low_bands==0 for backward compatibility.
+        self.drop_low_bands = int(drop_low_bands)
         self.freq_repr, self.grid = freq_repr, grid
         self.register_buffer("M", dct_matrix(block))
         band = zigzag_band_of(block, nbands).reshape(-1)                  # [64]
@@ -104,8 +109,9 @@ class ContentDCT(nn.Module):
         out.index_add_(3, self.band_of, logmag)
         cnt.index_add_(0, self.band_of, torch.ones_like(self.band_of, dtype=logmag.dtype))
         out = out / cnt.clamp_min(1.0)
-        if self.drop_dc:
-            out[..., 0] = 0.0
+        k = self.drop_low_bands if self.drop_low_bands > 0 else (1 if self.drop_dc else 0)
+        if k > 0:
+            out[..., :min(k, self.nbands - 1)] = 0.0    # keep >=1 band; suppress DC + lowest AC (content)
         return out                                                          # [B,C,nblocks,nbands]
 
     def forward(self, x: torch.Tensor):
@@ -120,6 +126,50 @@ class ContentDCT(nn.Module):
             grid_map = nn.functional.adaptive_avg_pool2d(grid_map, (self.grid, self.grid))  # [B,C*K,g,g]
             tokens = grid_map.flatten(2).transpose(1, 2).contiguous()      # [B, g*g, C*K]
         return flat, tokens
+
+
+class DCTFoMixup(nn.Module):
+    """Frequency-domain Forgery-Mixup on BLOCK-wise 8x8 DCT — the cross-dataset LEARNING lever
+    (adapts FreqDebias's FFT Fo-Mixup, arXiv:2509.22412, to block-DCT; 0 learnable params).
+
+    Mechanism: per training step, take the signed 8x8 block-DCT of the input, pick a random subset of
+    zigzag bands, MIX those coefficients with a shuffled partner sample (ratio xi), inverse-DCT back to an
+    augmented IMAGE. This diversifies the band content the model sees -> breaks the "spectral bias" where a
+    detector over-relies on FF++-specific bands and fails to generalise to Celeb-DF. Pair with a consistency
+    loss between model(x) and model(x_aug). DC band (0) is excluded from mixing by default (it carries
+    content/identity, not forgery cues). Identity when p_band==0 / mix_ratio==0 / batch<2.
+
+    train-time only (wrap call in `if self.training`). Operates in the model-input space directly (per input
+    channel), so the augmented image is a drop-in replacement fed to BOTH the spatial backbone and ContentDCT.
+    """
+    def __init__(self, block: int = 8, nbands: int = 16, p_band: float = 0.3, mix_ratio: float = 0.5):
+        super().__init__()
+        self.block, self.nbands = block, nbands
+        self.p_band, self.mix_ratio = float(p_band), float(mix_ratio)
+        self.register_buffer("M", dct_matrix(block))                       # orthonormal DCT-II: M M^T = I
+        self.register_buffer("band_of", zigzag_band_of(block, nbands).reshape(-1))  # [64]
+
+    @torch.no_grad()
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        if self.p_band <= 0 or self.mix_ratio <= 0 or x.shape[0] < 2:
+            return x
+        b = self.block; B, C, H, W = x.shape
+        ph, pw = (b - H % b) % b, (b - W % b) % b
+        xp = nn.functional.pad(x, (0, pw, 0, ph)) if (ph or pw) else x
+        Bn, Cn, Hp, Wp = xp.shape; nh, nw = Hp // b, Wp // b
+        blk = xp.unfold(2, b, b).unfold(3, b, b)                            # [B,C,nh,nw,8,8]
+        coef = torch.einsum("pa,ncijab,qb->ncijpq", self.M, blk, self.M)    # signed block-DCT = M blk M^T
+        perm = torch.randperm(B, device=x.device)
+        partner = coef[perm]
+        nsel = max(1, int(round(self.p_band * self.nbands)))
+        cand = torch.arange(1, self.nbands, device=x.device)               # exclude DC band 0 (content)
+        sel = cand[torch.randperm(cand.numel(), device=x.device)[:nsel]]
+        band_mask = torch.zeros(self.nbands, dtype=torch.bool, device=x.device); band_mask[sel] = True
+        pos = band_mask[self.band_of].view(1, 1, 1, 1, b, b).to(coef.dtype) * self.mix_ratio
+        mixed = coef * (1.0 - pos) + partner * pos
+        rec = torch.einsum("pa,ncijpq,qb->ncijab", self.M, mixed, self.M)   # inverse DCT = M^T coef M
+        rec = rec.permute(0, 1, 2, 4, 3, 5).reshape(Bn, Cn, Hp, Wp)
+        return rec[:, :, :H, :W]
 
 
 class GatedCrossAttnFusion(nn.Module):

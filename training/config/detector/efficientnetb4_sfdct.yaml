@@ -20,8 +20,19 @@ fusion_type: crossattn              # 'crossattn' | 'concat'  -- A3 one-variable
 gate_mode: zero                     # 'zero'(ours, identity@init) | 'sigmoid'(SFCL) | 'const'(FGINet 0.01) -- load-bearing ablation
 gate_lr_mult: 3.0                   # gate warm-up: fusion/alpha get this x base_lr so the zero-init gate engages
 shuffle_bands: false                # negative control: true => permute bands (same params, no freq semantics)
+dct_drop_low_bands: 0               # LEVER #1 (anti content-leakage): 0=drop DC only | k=drop DC + (k-1) lowest AC bands.
+                                    # Sweep k in {1,2,3,4} on FF++-VAL (not test) for the improved method; emphasises mid/high forgery cues.
 fusion_dim: 128                     # cross-attention d_model
 fusion_heads: 4
+
+# >>> LEARNING lever: DCT-Fo-Mixup + consistency (the cross-dataset AUC gain; FreqDebias->block-DCT). <<<
+# OFF by default so the naive baseline/ablation is unchanged. For the IMPROVED method set use_dct_fomixup: true.
+use_dct_fomixup: false              # true => mix DCT bands across samples + consistency loss (breaks spectral bias)
+fomixup_p_band: 0.3                 # fraction of zigzag bands mixed (sweep {0.2,0.3,0.5} on FF++ VAL)
+fomixup_mix_ratio: 0.5             # mixing amplitude xi (sweep {0.3,0.5,0.7} on FF++ VAL)
+fomixup_cls_w: 1.0                  # CE weight on the mixed view
+fomixup_consist_w: 1.0              # symmetric-KL prob consistency weight (lambda)
+fomixup_feat_w: 0.1                 # pooled-embedding consistency (MSE) weight
 
 # backbone setting
 backbone_config:
