@@ -19,8 +19,9 @@ PYBIN="$(command -v python || command -v python3)"
 WEIGHT_URL="${WEIGHT_URL:-https://github.com/lukemelas/EfficientNet-PyTorch/releases/download/1.0/efficientnet-b4-6ed6700e.pth}"
 JSON_FFPP_ID="${JSON_FFPP_ID:-11BxHUbcYl10SctvS-BWaSnPtMIQTT6AY}"
 JSON_CDF_ID="${JSON_CDF_ID:-1CEr_vuI8UuJkD6oAExl6_Hf6cZmYMgpm}"
-DATA_FFPP_ID="${DATA_FFPP_ID:-1Qolh4nuuBNzu3XpoHx2l4nO4fsALNB0h}"   # FF++ data (zip) — updated link
+DATA_FFPP_ID="${DATA_FFPP_ID:-1Qolh4nuuBNzu3XpoHx2l4nO4fsALNB0h}"   # FF++ data (zip) — Google-Drive fallback
 DATA_CDF_ID="${DATA_CDF_ID:-1oSihXtB0caSGAX0Tt3MxgFbsuY46ecml}"
+DATA_HF_REPO="${DATA_HF_REPO:-huanthuytnhh/deepfake-data}"          # HF dataset (fast CDN) — PREFERRED source
 DATAROOT="$ROOT/datasets"
 JSONDIR="$ROOT/preprocessing/dataset_json"
 REPRO="./training/config/detector/efficientnetb4_repro.yaml"
@@ -30,7 +31,7 @@ log(){ printf '\n\033[1;36m== %s ==\033[0m\n' "$*"; }
 
 cmd_setup(){
   log "deps (image's CUDA torch + the rest; uses uv = fast parallel resolver, falls back to pip)"
-  PKGS="gdown tensorboard efficientnet_pytorch albumentations opencv-python-headless imgaug scikit-image scikit-learn pandas tqdm pyyaml imageio einops kornia timm huggingface_hub"
+  PKGS="gdown tensorboard efficientnet_pytorch albumentations opencv-python-headless imgaug scikit-image scikit-learn pandas tqdm pyyaml imageio einops kornia timm huggingface_hub hf_transfer"
   pip install -q -U uv >/dev/null 2>&1 || true
   if command -v uv >/dev/null 2>&1; then
     uv pip install --python "$PYBIN" $PKGS || pip install -q $PKGS    # uv: seconds, not minutes
@@ -63,16 +64,52 @@ PY
 }
 
 cmd_data(){
-  log "datasets (heavy; bottleneck is Google-Drive throttle, not your link). Run inside tmux."
+  log "datasets — PREFER Hugging Face $DATA_HF_REPO (fast CDN), fall back to Google Drive (slow, throttled). Run in tmux."
   command -v unzip >/dev/null 2>&1 || { echo "installing unzip..."; apt-get update -qq && apt-get install -y -qq unzip; } || true
-  mkdir -p "$DATAROOT"; ( cd "$DATAROOT"
-    [ -d "$DATAROOT/FaceForensics++" ] || gdown "$DATA_FFPP_ID"
-    [ -d "$DATAROOT/Celeb-DF-v2" ]     || gdown "$DATA_CDF_ID"
-    shopt -s nullglob
-    for f in *.zip;             do echo "unzip $f"; unzip -qn "$f"; done
+  mkdir -p "$DATAROOT"
+  if [ -d "$DATAROOT/FaceForensics++" ] && [ -d "$DATAROOT/Celeb-DF-v2" ]; then echo "data already present"; ls "$DATAROOT"; return 0; fi
+  local got=0
+  # 1) try the HF dataset (zips) — fast, no Drive throttle
+  if [ -n "${HF_TOKEN:-}" ] && "$PYBIN" -c "import os,sys;from huggingface_hub import HfApi;sys.exit(0 if any(f.endswith('.zip') for f in HfApi(token=os.environ['HF_TOKEN']).list_repo_files('$DATA_HF_REPO',repo_type='dataset')) else 1)" 2>/dev/null; then
+    echo "==> downloading data zips from HF $DATA_HF_REPO (hf_transfer, fast)"
+    HF_HUB_ENABLE_HF_TRANSFER=1 "$PYBIN" - <<PY && got=1
+import os
+from huggingface_hub import snapshot_download
+snapshot_download("$DATA_HF_REPO", repo_type="dataset", local_dir="$DATAROOT", allow_patterns=["*.zip"], token=os.environ["HF_TOKEN"])
+PY
+  fi
+  # 2) fall back to Google Drive
+  if [ "$got" = 0 ]; then
+    echo "==> HF dataset not available -> Google Drive (slow). Tip: after this, run ./start.sh data-to-hf to make next time fast."
+    ( cd "$DATAROOT"
+      [ -d "$DATAROOT/FaceForensics++" ] || gdown "$DATA_FFPP_ID"
+      [ -d "$DATAROOT/Celeb-DF-v2" ]     || gdown "$DATA_CDF_ID" ) || true
+  fi
+  ( cd "$DATAROOT"; shopt -s nullglob
+    for f in *.zip;              do echo "unzip $f"; unzip -qn "$f"; done
     for f in *.tar *.tar.gz *.tgz; do echo "untar $f"; tar xf "$f"; done )
   echo "== datasets/ after extract =="; ls -la "$DATAROOT"
   [ -d "$DATAROOT/FaceForensics++" ] && echo "FaceForensics++/ OK" || echo "⚠️ no FaceForensics++/ — check zip layout (may need to move folders)"
+}
+
+cmd_data_to_hf(){
+  log "ONE-TIME: upload the downloaded data ZIPs to HF dataset $DATA_HF_REPO so future rents download fast (CDN)"
+  [ -z "${HF_TOKEN:-}" ] && { echo "set HF_TOKEN first (export HF_TOKEN=hf_xxx with write access)"; return 1; }
+  pip install -q -U hf_transfer huggingface_hub >/dev/null 2>&1 || true
+  HF_HUB_ENABLE_HF_TRANSFER=1 "$PYBIN" - <<PY
+import os, glob
+from huggingface_hub import HfApi
+api = HfApi(token=os.environ["HF_TOKEN"]); repo = "$DATA_HF_REPO"
+api.create_repo(repo, repo_type="dataset", private=True, exist_ok=True)
+zips = sorted(glob.glob("$DATAROOT/*.zip"))
+if not zips:
+    raise SystemExit("no *.zip in $DATAROOT (extracted zips may have been deleted). Keep the .zip next to the extracted folders to upload.")
+for z in zips:
+    print(f"uploading {os.path.basename(z)} ({os.path.getsize(z)/1e9:.1f} GB) ...")
+    api.upload_file(path_or_fileobj=z, path_in_repo=os.path.basename(z), repo_id=repo, repo_type="dataset")
+    print("  done:", os.path.basename(z))
+print("DONE -> https://huggingface.co/datasets/" + repo + "  (next rent: ./start.sh data pulls from here, fast)")
+PY
 }
 
 cmd_verify(){
@@ -216,8 +253,9 @@ PY
 
 case "${1:-setup}" in
   setup)  cmd_setup ;;
-  data)   cmd_data ;;
-  verify) cmd_verify ;;
+  data)       cmd_data ;;
+  data-to-hf) cmd_data_to_hf ;;
+  verify)     cmd_verify ;;
   smoke)   cmd_smoke ;;
   hftest)  cmd_hftest ;;
   train)   cmd_train ;;
