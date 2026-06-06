@@ -1,14 +1,21 @@
 #!/usr/bin/env python3
-"""download_liveness.py — tải LCC-FASD (Kaggle: faber24/lcc-fasd, ~5GB) qua kagglehub.
+"""download_liveness.py — lấy LCC-FASD theo thứ tự ưu tiên:
+  1. env LCC_FASD_DIR (đường dẫn đã có) -> dùng luôn.
+  2. HF dataset zip (huanthuytnhh/deepfake-data/lcc-fasd.zip) -> tải + giải nén  [KHÔNG cần Kaggle creds].
+  3. kagglehub (faber24/lcc-fasd)                                                [cần Kaggle creds].
+In ra đường dẫn LCC_FASD root ở DÒNG CUỐI (để run_liveness.sh bắt). --quiet để bỏ tóm tắt.
 
-Cần Kaggle creds: ~/.kaggle/kaggle.json (chmod 600) HOẶC env KAGGLE_USERNAME + KAGGLE_KEY.
-Token: https://www.kaggle.com/settings -> "Create New API Token".
-In ra đường dẫn LCC_FASD ở DÒNG CUỐI (để run_liveness.sh bắt). --quiet để bỏ tóm tắt.
+HF cần token: export HF_TOKEN=hf_...  (hoặc env HUGGINGFACE_HUB_TOKEN).
 """
 import os
 import sys
 import glob
+import zipfile
 import collections
+
+HF_REPO = os.environ.get("LCC_HF_REPO", "huanthuytnhh/deepfake-data")
+HF_FILE = "lcc-fasd.zip"
+UNZIP_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "_data")
 
 
 def _find_lcc_root(base):
@@ -19,17 +26,39 @@ def _find_lcc_root(base):
     return base
 
 
+def _from_hf():
+    tok = os.environ.get("HF_TOKEN") or os.environ.get("HUGGINGFACE_HUB_TOKEN")
+    from huggingface_hub import hf_hub_download
+    print(f"[hf] tải {HF_REPO}/{HF_FILE} ...", file=sys.stderr)
+    zp = hf_hub_download(HF_REPO, HF_FILE, repo_type="dataset", token=tok)
+    os.makedirs(UNZIP_DIR, exist_ok=True)
+    if not glob.glob(os.path.join(UNZIP_DIR, "**", "*_training"), recursive=True):
+        print("[hf] giải nén ...", file=sys.stderr)
+        with zipfile.ZipFile(zp) as z:
+            z.extractall(UNZIP_DIR)
+    return _find_lcc_root(UNZIP_DIR)
+
+
+def _from_kaggle():
+    import kagglehub
+    return _find_lcc_root(kagglehub.dataset_download("faber24/lcc-fasd"))
+
+
 def main():
     quiet = "--quiet" in sys.argv
-    try:
-        import kagglehub
-    except ImportError:
-        print("ERROR: pip install kagglehub", file=sys.stderr); sys.exit(2)
-    try:
-        path = kagglehub.dataset_download("faber24/lcc-fasd")
-    except Exception as e:
-        print(f"ERROR: download failed ({e}). Set Kaggle creds and retry.", file=sys.stderr); sys.exit(3)
-    root = _find_lcc_root(path)
+    env = os.environ.get("LCC_FASD_DIR")
+    root = None
+    if env and os.path.isdir(env):
+        root = _find_lcc_root(env)
+    if root is None:
+        try:
+            root = _from_hf()
+        except Exception as e:
+            print(f"[hf] thất bại ({e}); thử kagglehub ...", file=sys.stderr)
+            try:
+                root = _from_kaggle()
+            except Exception as e2:
+                print(f"ERROR: cả HF lẫn Kaggle đều lỗi ({e2})", file=sys.stderr); sys.exit(3)
     if not quiet:
         sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
         from dataset_liveness import list_split_liveness

@@ -24,6 +24,7 @@ from torch.amp import autocast, GradScaler
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))   # cho import *_liveness
 from model_liveness import build_b4_liveness
+from model_dct_liveness import build_b4dct_liveness
 from dataset_liveness import list_split_liveness, LCCFASDLiveness
 import metrics_liveness as M
 
@@ -44,6 +45,7 @@ def infer_probs_liveness(model, loader, device, use_amp):
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--data_root", required=True, help="LCC_FASD (chứa *_training/_development/_evaluation)")
+    ap.add_argument("--model", default="b4", choices=["b4", "b4dct"], help="b4 baseline | b4dct (B4+block-DCT)")
     ap.add_argument("--out", required=True)
     ap.add_argument("--epochs", type=int, default=15)
     ap.add_argument("--batch", type=int, default=32)        # khớp protocol deepfake
@@ -86,8 +88,10 @@ def main():
                                        shuffle=aug, num_workers=a.workers, pin_memory=True, drop_last=aug)
     tl, dl, el = mk(tr, True), mk(dv, False), mk(te, False)
 
-    model = build_b4_liveness(num_classes=2, pretrained=True).to(a.device)
-    opt = torch.optim.Adam(model.parameters(), lr=a.lr, weight_decay=5e-4)
+    builder = build_b4dct_liveness if a.model == "b4dct" else build_b4_liveness
+    model = builder(num_classes=2, pretrained=True).to(a.device)
+    params = model.get_optim_groups(a.lr) if hasattr(model, "get_optim_groups") else model.parameters()  # gate warm-up cho b4dct
+    opt = torch.optim.Adam(params, lr=a.lr, weight_decay=5e-4)
     scaler = GradScaler("cuda", enabled=use_amp)
     ce = nn.CrossEntropyLoss()
 
@@ -116,7 +120,7 @@ def main():
     dvL, dvP = infer_probs_liveness(model, dl, a.device, use_amp)
     teL, teP = infer_probs_liveness(model, el, a.device, use_amp)
     res = M.evaluate_liveness(dvL, dvP, teL, teP)
-    res.update({"model": "b4_liveness_baseline", "dev_best_auc": best_auc, "n_test": int(len(teL))})
+    res.update({"model": f"{a.model}_liveness", "dev_best_auc": best_auc, "n_test": int(len(teL))})
     json.dump(res, open(os.path.join(a.out, "metrics_liveness.json"), "w"), indent=2)
     print("== TEST (liveness) ==\n" + json.dumps(res, indent=2, ensure_ascii=False))
 
