@@ -46,9 +46,9 @@ def main():
     ap.add_argument("--data_root", required=True, help="LCC_FASD (chứa *_training/_development/_evaluation)")
     ap.add_argument("--out", required=True)
     ap.add_argument("--epochs", type=int, default=15)
-    ap.add_argument("--batch", type=int, default=32)
-    ap.add_argument("--lr", type=float, default=1e-4)
-    ap.add_argument("--res", type=int, default=224)
+    ap.add_argument("--batch", type=int, default=32)        # khớp protocol deepfake
+    ap.add_argument("--lr", type=float, default=2e-4)       # khớp deepfake Adam lr 2e-4
+    ap.add_argument("--res", type=int, default=256)         # khớp deepfake resolution 256
     ap.add_argument("--patience", type=int, default=3)
     ap.add_argument("--workers", type=int, default=4)
     ap.add_argument("--no_amp", action="store_true")

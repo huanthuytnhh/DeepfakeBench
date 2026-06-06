@@ -1,40 +1,49 @@
-# Liveness / Face Anti-Spoofing — module ĐỘC LẬP (B4 baseline)
+# Liveness / Face Anti-Spoofing — module ĐỘC LẬP (B4 baseline ≈ B4 detector deepfake)
 
-Tách hoàn toàn khỏi code deepfake để **tránh xung đột file**: mọi thứ nằm trong `liveness/`, đuôi `_liveness`,
-model B4 dựng bằng **torchvision** (không import `training/detectors/...`).
+Tách hoàn toàn khỏi code deepfake (**tránh xung đột file**): mọi thứ trong `liveness/`, đuôi `_liveness`.
+B4 được làm **TƯƠNG ĐƯƠNG NHẤT** với detector B4 của DeepfakeBench để so sánh công bằng.
 
-## Thiết kế (vì sao không xung đột)
-| | Deepfake | Liveness (module này) |
+## Tương đương ở đâu (đã verify: state_dict 706/706 keys khớp)
+| | Deepfake B4 detector | Liveness B4 (module này) |
 |---|---|---|
-| Model | `training/detectors/efficientnetb4*` | `liveness/model_liveness.py` (torchvision B4) |
-| Data | `training/dataset/...` | `liveness/dataset_liveness.py` (LCC-FASD) |
-| Metric | `training/metrics/...` (AUC) | `liveness/metrics_liveness.py` (APCER/BPCER/ACER/EER) |
-| Train | `training/train.py` | `liveness/train_liveness.py` |
-→ **Không file nào dùng chung.** Sửa bên này không ảnh hưởng bên kia.
+| Backbone | `efficientnet_pytorch` EfficientNet-B4 | **cùng** (qua `efficientnet_pytorch`) |
+| Pretrained | `efficientnet-b4-6ed6700e.pth` | **cùng file** (fallback tải lukemelas y hệt) |
+| Stem / head | `_conv_stem=Conv2d(3,48,3,s2)`, `Linear(1792,2)` | **cùng** |
+| Chuẩn hoá | 0.5/0.5 → [-1,1] | **cùng** (`NORM_*`) |
+| Độ phân giải | 256, resize INTER_CUBIC | **cùng** |
+| Augmentation | flip/rotate/blur/bright-FancyPCA-HSV/JPEG | **mirror cùng tham số** |
+| Optimizer | Adam lr 2e-4, wd 5e-4 | **cùng** |
+| Batch | 32 | **32** |
+→ Khác biệt duy nhất: **dữ liệu** (live/spoof thay vì real/fake) — đúng mục đích.
+→ Self-contained: chỉ phụ thuộc pip `efficientnet_pytorch`, **KHÔNG import `training/detectors`**.
 
-## Chạy
+## Chạy trên vast 5090 (sau khi fix1/fix2 xong)
 ```bash
-cd DeepfakeBench
-# Kaggle creds 1 lần: ~/.kaggle/kaggle.json (https://www.kaggle.com/settings)
+cd /workspace/DeepfakeBench
+git fetch origin feat/fas-liveness && git checkout feat/fas-liveness
+# Kaggle creds 1 lần trên box: ~/.kaggle/kaggle.json (https://www.kaggle.com/settings)
+export HF_TOKEN=hf_...
 
-SMOKE=1 ./liveness/run_liveness.sh        # smoke TRƯỚC (1 epoch, 200 ảnh/split) — rule
-BATCH=16 ./liveness/run_liveness.sh       # full trên 4GB (AMP)
+SMOKE=1 ./liveness/run_liveness.sh        # smoke TRƯỚC (rule)
+BATCH=32 ./liveness/run_liveness.sh       # full -> push model+metrics lên HF runs/liveness-<ts>/b4/
 ```
-Kết quả → `liveness/out/b4/metrics_liveness.json` (APCER/BPCER/ACER/EER/AUC).
+Kéo model về local:
+```bash
+huggingface-cli download huanthuytnhh/deepfake --include 'runs/liveness-<ts>/b4/*' --local-dir ./liveness_pulled
+```
 
-## Files
+## Files (đuôi _liveness)
 | File | Vai trò |
 |---|---|
-| `model_liveness.py` | B4 baseline (torchvision, head 2 lớp live/spoof) |
-| `dataset_liveness.py` | LCC-FASD loader (RGB, resize, ImageNet norm) |
+| `model_liveness.py` | B4 ≈ detector deepfake (efficientnet_pytorch, 0.5-norm, 256) |
+| `dataset_liveness.py` | LCC-FASD loader (norm/res/aug khớp deepfake) |
 | `metrics_liveness.py` | APCER/BPCER/ACER/EER/AUC, ngưỡng @dev-EER |
-| `download_liveness.py` | tải LCC-FASD (kagglehub) |
-| `train_liveness.py` | train (AMP + early-stop) + eval |
-| `run_liveness.sh` | 1 lệnh: tải → train B4 → metrics |
+| `train_liveness.py` | train (AMP + early-stop, Adam 2e-4, batch 32) + eval |
+| `download_liveness.py` · `run_liveness.sh` | tải LCC-FASD · 1 lệnh train + push HF |
 
-## Kỳ vọng (LCC-FASD, CNN nhẹ — từ literature verify)
-AUC ~0.88–0.92, ACER ~16–21%. Cao hơn nhiều (AUC ~0.99) thường = **leak** identity/video → kiểm split.
+## Kỳ vọng (LCC-FASD, từ literature verify)
+AUC ~0.88–0.92, ACER ~16–21%. AUC ~0.99 thường = **leak** identity/video → kiểm split.
 
-## Mở rộng sau (nếu muốn ablation block-DCT cho liveness)
-Thêm `build_b4dct_liveness()` vào `model_liveness.py` (nhánh DCT tự xây, vẫn KHÔNG import code deepfake)
-→ so B4 vs B4+DCT trên liveness, chứng minh tần số giúp cả 2 bài toán.
+## Mở rộng: ablation block-DCT cho liveness
+Thêm `build_b4dct_liveness()` (nhánh DCT tự xây, vẫn standalone) → so B4 vs B4+DCT trên liveness,
+chứng minh tần số giúp CẢ deepfake và liveness.

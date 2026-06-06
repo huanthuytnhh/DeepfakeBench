@@ -1,6 +1,7 @@
 """dataset_liveness.py — LCC-FASD loader (độc lập, đuôi _liveness).
 
-Tiền xử lý riêng cho liveness (KHÔNG dùng chung với deepfake): RGB, resize, ToTensor, normalize ImageNet.
+Tiền xử lý KHỚP DeepfakeBench để B4 liveness tương đương B4 detector: RGB, resize 256 (INTER_CUBIC),
+ToTensor, normalize 0.5/0.5 -> [-1,1]; augmentation mirror init_data_aug_method của DeepfakeBench.
 Nhãn suy từ tên thư mục: real/live = 0, spoof/fake/attack = 1.
 """
 import os
@@ -10,7 +11,7 @@ import torch
 from torch.utils.data import Dataset
 import torchvision.transforms as T
 
-from model_liveness import IMAGENET_MEAN, IMAGENET_STD
+from model_liveness import NORM_MEAN, NORM_STD, RESOLUTION
 
 IMG_EXT = (".jpg", ".jpeg", ".png", ".bmp", ".webp")
 LIVE_KEYS = ("real", "live", "genuine", "bonafide", "client")
@@ -33,7 +34,6 @@ def _infer_label_liveness(path):
 
 
 def list_split_liveness(root):
-    """[(image_path, label)] dưới `root`, nhãn suy từ thư mục."""
     items = []
     for p in sorted(glob.glob(os.path.join(root, "**", "*"), recursive=True)):
         if p.lower().endswith(IMG_EXT):
@@ -43,27 +43,33 @@ def list_split_liveness(root):
     return items
 
 
-def _build_aug_liveness():
+def _build_aug_liveness(resolution):
+    """Mirror DeepfakeBench init_data_aug_method (cùng phép + cùng tham số) cho tương đương."""
     import albumentations as A
     try:
         return A.Compose([
             A.HorizontalFlip(p=0.5),
             A.Rotate(limit=10, p=0.5),
-            A.RandomBrightnessContrast(brightness_limit=0.15, contrast_limit=0.15, p=0.5),
-            A.ImageCompression(quality_lower=40, quality_upper=100, p=0.4),
+            A.GaussianBlur(blur_limit=(3, 7), p=0.5),
+            A.OneOf([
+                A.RandomBrightnessContrast(brightness_limit=0.1, contrast_limit=0.1),
+                A.FancyPCA(),
+                A.HueSaturationValue(),
+            ], p=0.5),
+            A.ImageCompression(quality_lower=40, quality_upper=100, p=0.5),
         ])
     except Exception as e:
-        print(f"[aug_liveness] fallback flip-only ({e})")
-        return A.Compose([A.HorizontalFlip(p=0.5)])
+        print(f"[aug_liveness] fallback ({e})")
+        return A.Compose([A.HorizontalFlip(p=0.5), A.Rotate(limit=10, p=0.5)])
 
 
 class LCCFASDLiveness(Dataset):
-    def __init__(self, items, resolution=224, augment=False):
+    def __init__(self, items, resolution=RESOLUTION, augment=False):
         self.items = items
         self.res = resolution
         self.to_tensor = T.ToTensor()
-        self.normalize = T.Normalize(mean=list(IMAGENET_MEAN), std=list(IMAGENET_STD))
-        self.aug = _build_aug_liveness() if augment else None
+        self.normalize = T.Normalize(mean=list(NORM_MEAN), std=list(NORM_STD))   # 0.5/0.5 như deepfake
+        self.aug = _build_aug_liveness(resolution) if augment else None
 
     def __len__(self):
         return len(self.items)
@@ -78,6 +84,6 @@ class LCCFASDLiveness(Dataset):
             rgb = cv2.cvtColor(bgr, cv2.COLOR_BGR2RGB)
         if self.aug is not None:
             rgb = self.aug(image=rgb)["image"]
-        rgb = cv2.resize(rgb, (self.res, self.res), interpolation=cv2.INTER_LINEAR)
+        rgb = cv2.resize(rgb, (self.res, self.res), interpolation=cv2.INTER_CUBIC)  # CUBIC như deepfake
         x = self.normalize(self.to_tensor(rgb))
         return x, label
