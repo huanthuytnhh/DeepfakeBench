@@ -110,18 +110,32 @@ python tools/infer.py \
 
 ---
 
-## 6. Method — các "đòn" cải tiến (bật/tắt trong `training/config/detector/efficientnetb4_sfdct.yaml`)
-| Knob | Đòn | Adapt từ |
-|---|---|---|
-| `dct_drop_low_bands: k` | bỏ DC + k-1 band thấp (chống content-leakage) | — |
-| `dct_use_sign: true` | thêm DCT coeff sign (phase-analog) | SPSL |
-| `dct_srm_residual: true` | block-DCT trên SRM high-pass residual | SRM |
-| `use_dct_fomixup: true` | trộn band DCT khi train + consistency loss | FreqDebias |
-| `dct_fca_attention: true` | học band (FcaNet multi-spectral attention) | FcaNet |
-| `use_single_center_loss: true` | loss metric tách real/fake | FDFL |
+## 6. Method — hệ thống model & các "đòn" cải tiến
 
-- **Row1** = `use_dct_fomixup + dct_use_sign + dct_srm_residual + drop_low_bands` (0 tham số thêm)
-- **Row2** = `dct_fca_attention + use_single_center_loss + use_dct_fomixup` (học band)
+### 6.1. Lineup các model (thứ tự ablation: spatial → +DCT → +cải tiến)
+| # | Model | Config (yaml) | Cơ chế | CDFv2 AUC |
+|---|---|---|---|---|
+| 1 | **B4** (baseline) | `efficientnetb4.yaml` | EfficientNet-B4 spatial-only | **0.7497** (bar) |
+| 2 | **naive SFDCT** = "B4 + DCT" | `efficientnetb4_sfdct.yaml` (knob S1-S5 OFF) | + block-DCT branch + gated cross-attention (0 tham số) | **0.7572** (+0.75) |
+| 3 | **Row1** (cải tiến, 0-param) | `efficientnetb4_sfdct.yaml` + S1+S2+S3 | + DCT-sign + SRM-residual + Fo-Mixup | *(đang train)* |
+| 4 | **Row2** (cải tiến, học band) | `efficientnetb4_sfdct.yaml` + S4+S5(+S3) | + FcaNet học-band + single-center loss | *(đang train)* |
+
+> **"B4-DCT" trong luận văn = model #2 (naive SFDCT)** = B4 + block-DCT thuần. Row1/Row2 = thêm đòn S1-S5 lên trên.
+> Câu chuyện: B4 (spatial) → +DCT thô đã +0.75 → S1-S5 đẩy thêm. (Bonus: repo còn `efficientnetb4_dct.yaml` = B4 + FcaNet DCT-attention riêng — không bắt buộc, vì S4 của Row2 đã dùng FcaNet.)
+
+### 6.2. Các knob bật/tắt đòn (trong `training/config/detector/efficientnetb4_sfdct.yaml`)
+| Knob | Đòn | Adapt từ | Row |
+|---|---|---|---|
+| `dct_drop_low_bands: k` | bỏ DC + k-1 band thấp (chống content-leakage) | — | 1,2 |
+| `dct_use_sign: true` | thêm DCT coeff sign (phase-analog) | SPSL | 1 |
+| `dct_srm_residual: true` | block-DCT trên SRM high-pass residual | SRM | 1 |
+| `use_dct_fomixup: true` | trộn band DCT khi train + consistency loss | FreqDebias | 1,2 |
+| `dct_fca_attention: true` | học band (FcaNet multi-spectral attention) | FcaNet | 2 |
+| `use_single_center_loss: true` | loss metric tách real/fake | FDFL | 2 |
+
+- **Row1** = `use_dct_fomixup + dct_use_sign + dct_srm_residual + dct_drop_low_bands` (0 tham số thêm)
+- **Row2** = `dct_fca_attention + use_single_center_loss + use_dct_fomixup` (thêm tham số học)
+- **naive** = tất cả OFF · **B4** = chạy `efficientnetb4.yaml`
 
 ---
 
