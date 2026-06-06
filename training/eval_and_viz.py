@@ -187,24 +187,31 @@ def main():
     model = DETECTOR[config["model_name"]](config).to(device)
     ck = torch.load(args.weights_path, map_location=device)
     if isinstance(ck, dict) and "state_dict" in ck: ck = ck["state_dict"]
-    model.load_state_dict(ck, strict=True); model.eval()
+    miss, unexp = model.load_state_dict(ck, strict=False); model.eval()   # tolerate aux/buffer keys (like infer.py)
+    if miss:  print(f"[load] {len(miss)} missing keys (e.g. {miss[:3]})")
+    if unexp: print(f"[load] {len(unexp)} unexpected keys (e.g. {unexp[:3]})")
     print("===> checkpoint:", args.weights_path)
 
     loaders = make_loaders(config)
     res, roc, pr = {}, {}, {}
     first = None
     for name, loader in loaders.items():
-        if first is None: first = (name, loader)
-        prob, label, feat = infer(model, loader)
-        np.savez(os.path.join(args.out, f"scores_{name}.npz"), prob=prob, label=label, feat=feat)
-        m = get_test_metrics(y_pred=prob, y_true=label, img_names=loader.dataset.data_dict["image"])
-        fpr, tpr, _ = roc_curve(label, prob); prec, rec, _ = precision_recall_curve(label, prob)
-        res[name] = {"frame_auc": float(sk_auc(fpr, tpr)), "ap": float(average_precision_score(label, prob)),
-                     "eer": float(fpr[np.nanargmin(np.abs((1-tpr)-fpr))]),
-                     "tpr@fpr=5%": tpr_at(fpr, tpr, .05), "tpr@fpr=1%": tpr_at(fpr, tpr, .01),
-                     "video_auc": float(m.get("video_auc", float("nan"))), "n": int(len(label))}
-        roc[name] = (fpr, tpr); pr[name] = (rec, prec)
-        print(f"[{name}] {json.dumps(res[name])}")
+        try:                                                     # one dataset failing to load must not nuke the rest
+            prob, label, feat = infer(model, loader)
+            np.savez(os.path.join(args.out, f"scores_{name}.npz"), prob=prob, label=label, feat=feat)
+            m = get_test_metrics(y_pred=prob, y_true=label, img_names=loader.dataset.data_dict["image"])
+            fpr, tpr, _ = roc_curve(label, prob); prec, rec, _ = precision_recall_curve(label, prob)
+            res[name] = {"frame_auc": float(sk_auc(fpr, tpr)), "ap": float(average_precision_score(label, prob)),
+                         "eer": float(fpr[np.nanargmin(np.abs((1-tpr)-fpr))]),
+                         "tpr@fpr=5%": tpr_at(fpr, tpr, .05), "tpr@fpr=1%": tpr_at(fpr, tpr, .01),
+                         "video_auc": float(m.get("video_auc", float("nan"))), "n": int(len(label))}
+            roc[name] = (fpr, tpr); pr[name] = (rec, prec)
+            if first is None: first = (name, loader)
+            print(f"[{name}] {json.dumps(res[name])}")
+        except Exception as e:
+            print(f"[skip dataset {name}] {type(e).__name__}: {e}")
+    if not res:
+        print("!! no dataset produced scores — check test data paths / dataset_json folder"); return
     json.dump(res, open(os.path.join(args.out, "results.json"), "w"), indent=2)
 
     guard(fig_roc, roc, res); guard(fig_pr, pr, res); guard(fig_radar, res)
