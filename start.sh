@@ -101,7 +101,21 @@ cmd_data(){
   log "datasets — PREFER Hugging Face $DATA_HF_REPO (fast CDN), fall back to Google Drive (slow, throttled). Run in tmux."
   command -v unzip >/dev/null 2>&1 || { echo "installing unzip..."; apt-get update -qq && apt-get install -y -qq unzip; } || true
   mkdir -p "$DATAROOT"
-  if [ -d "$DATAROOT/FaceForensics++" ] && [ -d "$DATAROOT/Celeb-DF-v2" ]; then echo "data already present"; ls "$DATAROOT"; return 0; fi
+  # skip ONLY if data is actually EXTRACTED (frames present), not just the folder exists -> otherwise we must
+  # still unzip. If only the .zip files are present (downloaded but not extracted), fall through to the unzip loop.
+  if [ -d "$DATAROOT/FaceForensics++/original_sequences" ] && ls -d "$DATAROOT"/Celeb-DF-v2/*/ >/dev/null 2>&1; then
+    echo "data already extracted -> skip"; return 0; fi
+  # if the zips are already downloaded (e.g. a previous interrupted run), unzip them now and we are done
+  if ls "$DATAROOT"/*.zip >/dev/null 2>&1; then
+    echo "==> zips present -> extracting (smart wrapper-detect)"
+    ( cd "$DATAROOT"; shopt -s nullglob
+      for f in *.zip; do name="${f%.zip}"; first="$(unzip -Z1 "$f" 2>/dev/null | head -1)"
+        case "$first" in "$name"/*) echo "unzip $f -> flat"; unzip -qn "$f" ;;
+          *) echo "unzip $f -> $name/"; mkdir -p "$name"; unzip -qn "$f" -d "$name" ;; esac
+      done )
+    if [ -d "$DATAROOT/FaceForensics++/original_sequences" ] && ls -d "$DATAROOT"/Celeb-DF-v2/*/ >/dev/null 2>&1; then
+      echo "extracted OK from existing zips"; return 0; fi
+  fi
   local got=0
   # 1) try the HF dataset (zips) — fast, no Drive throttle
   if [ -n "${HF_TOKEN:-}" ] && "$PYBIN" -c "import os,sys;from huggingface_hub import HfApi;sys.exit(0 if any(f.endswith('.zip') for f in HfApi(token=os.environ['HF_TOKEN']).list_repo_files('$DATA_HF_REPO',repo_type='dataset')) else 1)" 2>/dev/null; then
