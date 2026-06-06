@@ -318,11 +318,12 @@ case "${1:-setup}" in
   smoke)   cmd_smoke ;;
   hftest)  cmd_hftest ;;
   train)   cmd_train ;;          # OLD flow (B4 + naive SFDCT). Kept for reference.
+  ablation) bash "$ROOT/tools/run_improved_ablation.sh" "${2:-1024}" ;;  # Row1 + Row2 (B4 reused). RUN_B4=1 ./start.sh ablation -> also B4.
   viz)     cmd_viz ;;
   results) cmd_results ;;
   model)   cmd_model ;;
-  all)     cmd_all ;;            # NEW full pipeline (B4 + Row1 + Row2 -> figures -> HF), in tmux
+  all)     cmd_all ;;            # NEW full pipeline (Row1 + Row2 -> figures -> HF), in tmux/nohup
   all-old) cmd_setup; cmd_data; cmd_verify; cmd_smoke; cmd_train ;;
-  *) echo "usage: ./start.sh [setup|data|verify|smoke|train|viz|results|model|all]"; exit 1 ;;
+  *) echo "usage: ./start.sh [setup|data|verify|smoke|ablation|train|viz|results|model|all]"; exit 1 ;;
 esac
 log "done: ${1:-setup}"
