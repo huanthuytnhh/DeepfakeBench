@@ -31,6 +31,16 @@ log(){ printf '\n\033[1;36m== %s ==\033[0m\n' "$*"; }
 
 cmd_setup(){
   log "deps (image's CUDA torch + the rest; uses uv = fast parallel resolver, falls back to pip)"
+  # FAIL-FAST on a too-new Python: the pinned stack (pandas==2.1.4 etc.) has NO wheels for 3.13+, and building
+  # from source FAILS (Python 3.14 changed the C API: _PyLong_AsByteArray / optimization_level). Need 3.10-3.12.
+  PYVER=$("$PYBIN" -c 'import sys;print(f"{sys.version_info.major}.{sys.version_info.minor}")' 2>/dev/null || echo "?")
+  case "$PYVER" in
+    3.1[012]) echo "   Python $PYVER OK" ;;
+    *) echo "!! Python $PYVER on this box is unsupported. Rent a box with Python 3.10-3.12 (standard PyTorch"
+       echo "   template) — 3.13+/3.14 lacks wheels for the pinned scientific stack and source builds fail."
+       echo "   Tip: after the box starts, run 'python --version'; destroy + re-rent if it is 3.13+."
+       exit 1 ;;
+  esac
   # NOTE: do NOT install imgaug — it uses np.sctypes (removed in NumPy 2.0, which torch 2.11 ships) and crashes.
   # albumentations 1.3.1 wraps the imgaug import in try/except -> falls back to stubs; our aug uses no imgaug transform.
   # ALL versions PINNED to the locally smoke-validated stack (2026-06-05) so a fresh box reproduces it exactly,
