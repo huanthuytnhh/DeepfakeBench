@@ -1,0 +1,3 @@
+# Output regenerable — chạy lại bằng run_quickwins.sh / mt*.py
+outputs/
+__pycache__/
