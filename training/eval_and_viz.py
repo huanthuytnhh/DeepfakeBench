@@ -196,8 +196,12 @@ def main():
     for name, loader in loaders.items():
         if first is None: first = (name, loader)
         prob, label, feat = infer(model, loader)
-        np.savez(os.path.join(args.out, f"scores_{name}.npz"), prob=prob, label=label, feat=feat)
-        m = get_test_metrics(y_pred=prob, y_true=label, img_names=loader.dataset.data_dict["image"])
+        # lưu thêm 'img' (đường dẫn frame, order khớp do shuffle=False) → suy video-id cho bootstrap CẤP-VIDEO
+        img_names = loader.dataset.data_dict["image"]
+        np.savez(os.path.join(args.out, f"scores_{name}.npz"),
+                 prob=prob, label=label, feat=feat,
+                 img=np.array(img_names[:len(prob)], dtype=object))
+        m = get_test_metrics(y_pred=prob, y_true=label, img_names=img_names)
         fpr, tpr, _ = roc_curve(label, prob); prec, rec, _ = precision_recall_curve(label, prob)
         res[name] = {"frame_auc": float(sk_auc(fpr, tpr)), "ap": float(average_precision_score(label, prob)),
                      "eer": float(fpr[np.nanargmin(np.abs((1-tpr)-fpr))]),

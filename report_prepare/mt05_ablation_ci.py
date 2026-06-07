@@ -28,27 +28,30 @@ def main():
     for ds in datasets:
         present = [m for m in models if (C.VIZ / m / f"scores_{ds}.npz").exists()]
         cache = {m: C.load_scores(m, ds) for m in present}
+        vids = {m: (C.video_ids(im) if (im := C.load_img(m, ds)) is not None else None) for m in present}
         for m in present:
             prob, label, _ = cache[m]
-            auc, lo, hi = C.bootstrap_auc_ci(label, prob, N_BOOT)
-            ci_rows.append({"model": C.model_label(m), "dataset": ds,
-                            "AUC": round(auc, 4), "CI95_lo": round(lo, 4), "CI95_hi": round(hi, 4),
-                            "n": len(label)})
+            if vids[m] is not None:   # CẤP-VIDEO (đúng thống kê) khi .npz đã có 'img'
+                auc, lo, hi = C.bootstrap_auc_ci_video(label, prob, vids[m], N_BOOT); lvl = "video"
+            else:                      # fallback cấp-frame (CI quá hẹp — chỉ tạm)
+                auc, lo, hi = C.bootstrap_auc_ci(label, prob, N_BOOT); lvl = "frame⚠"
+            ci_rows.append({"model": C.model_label(m), "dataset": ds, "level": lvl,
+                            "AUC": round(auc, 4), "CI95_lo": round(lo, 4), "CI95_hi": round(hi, 4), "n": len(label)})
         if BASELINE in cache:
             prob_b, lab_b, _ = cache[BASELINE]
             for m in present:
                 if m == BASELINE:
                     continue
                 prob_m, label_m, _ = cache[m]
-                # Các .npz đánh giá riêng → KHÔNG đảm bảo cùng thứ tự mẫu. Chỉ paired khi nhãn trùng khít;
-                # nếu không → unpaired (resample độc lập) để tránh ghép sai (bug ΔAUC âm giả).
-                aligned = (len(label_m) == len(lab_b)) and bool(np.array_equal(label_m, lab_b))
-                if aligned:
-                    d, lo, hi, p = C.paired_bootstrap_diff(lab_b, prob_b, prob_m, N_BOOT)
-                    method = "paired"
+                if vids[m] is not None and vids[BASELINE] is not None:   # cấp-video unpaired (2 .npz khác mẫu)
+                    d, lo, hi, p = C.unpaired_bootstrap_diff_video(lab_b, prob_b, vids[BASELINE], label_m, prob_m, vids[m], N_BOOT)
+                    method = "unpaired-video"
                 else:
-                    d, lo, hi, p = C.unpaired_bootstrap_diff(lab_b, prob_b, label_m, prob_m, N_BOOT)
-                    method = "unpaired"
+                    aligned = (len(label_m) == len(lab_b)) and bool(np.array_equal(label_m, lab_b))
+                    if aligned:
+                        d, lo, hi, p = C.paired_bootstrap_diff(lab_b, prob_b, prob_m, N_BOOT); method = "paired-frame⚠"
+                    else:
+                        d, lo, hi, p = C.unpaired_bootstrap_diff(lab_b, prob_b, label_m, prob_m, N_BOOT); method = "unpaired-frame⚠"
                 sig = "có ý nghĩa" if (lo > 0 or hi < 0) else "trong nhiễu (không có ý nghĩa)"
                 diff_rows.append({"dataset": ds, "so_sanh": f"{C.model_label(m)} − {C.model_label(BASELINE)}",
                                   "method": method, "dAUC": round(d, 4), "CI95_lo": round(lo, 4),

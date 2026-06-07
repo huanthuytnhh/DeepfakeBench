@@ -160,6 +160,67 @@ def unpaired_bootstrap_diff(label_a, prob_a, label_b, prob_b, n_boot=2000, seed=
     return base, float(lo), float(hi), float(min(p, 1.0))
 
 
+# ── Video-level (cho bootstrap cấp-video — đúng thống kê hơn cấp-frame) ──
+def load_img(model: str, dataset: str):
+    """Trả mảng đường dẫn frame ('img') nếu .npz có (sau khi re-eval bằng eval_and_viz đã patch); else None."""
+    import os
+    p = VIZ / model / f"scores_{dataset}.npz"
+    if not p.exists():
+        return None
+    z = np.load(p, allow_pickle=True)
+    return z["img"] if "img" in z.files else None
+
+
+def video_ids(img):
+    """Suy video-id = thư mục cha của mỗi path frame (khớp get_video_metrics của DeepfakeBench)."""
+    import os
+    return np.array([os.path.dirname(str(s)) for s in img])
+
+
+def _video_groups(vid):
+    uniq = np.unique(vid)
+    return uniq, {v: np.where(vid == v)[0] for v in uniq}
+
+
+def bootstrap_auc_ci_video(label, prob, vid, n_boot=2000, seed=42, alpha=0.05):
+    """AUC + CI bootstrap CẤP-VIDEO: resample VIDEO (không frame), gộp frame các video được chọn."""
+    from sklearn.metrics import roc_auc_score
+    rng = np.random.default_rng(seed)
+    label, prob, vid = np.asarray(label), np.asarray(prob), np.asarray(vid)
+    uniq, groups = _video_groups(vid)
+    base = float(roc_auc_score(label, prob))
+    aucs = []
+    for _ in range(n_boot):
+        pick = rng.integers(0, len(uniq), len(uniq))
+        idx = np.concatenate([groups[uniq[k]] for k in pick])
+        if label[idx].min() == label[idx].max():
+            continue
+        aucs.append(roc_auc_score(label[idx], prob[idx]))
+    lo, hi = np.percentile(aucs, [100 * alpha / 2, 100 * (1 - alpha / 2)])
+    return base, float(lo), float(hi)
+
+
+def unpaired_bootstrap_diff_video(la, pa, va, lb, pb, vb, n_boot=2000, seed=42, alpha=0.05):
+    """ΔAUC = AUC(b) − AUC(a), resample VIDEO độc lập mỗi model (khi 2 .npz khác thứ tự/mẫu)."""
+    from sklearn.metrics import roc_auc_score
+    rng = np.random.default_rng(seed)
+    la, pa, va = np.asarray(la), np.asarray(pa), np.asarray(va)
+    lb, pb, vb = np.asarray(lb), np.asarray(pb), np.asarray(vb)
+    ua, ga = _video_groups(va); ub, gb = _video_groups(vb)
+    base = float(roc_auc_score(lb, pb) - roc_auc_score(la, pa))
+    diffs = []
+    for _ in range(n_boot):
+        ia = np.concatenate([ga[ua[k]] for k in rng.integers(0, len(ua), len(ua))])
+        ib = np.concatenate([gb[ub[k]] for k in rng.integers(0, len(ub), len(ub))])
+        if la[ia].min() == la[ia].max() or lb[ib].min() == lb[ib].max():
+            continue
+        diffs.append(roc_auc_score(lb[ib], pb[ib]) - roc_auc_score(la[ia], pa[ia]))
+    diffs = np.array(diffs)
+    lo, hi = np.percentile(diffs, [100 * alpha / 2, 100 * (1 - alpha / 2)])
+    p = 2 * min((diffs <= 0).mean(), (diffs >= 0).mean())
+    return base, float(lo), float(hi), float(min(p, 1.0))
+
+
 def expected_calibration_error(label, prob, n_bins=15):
     """ECE + dữ liệu reliability diagram. Trả (ece, bin_centers, bin_acc, bin_conf, bin_count)."""
     label = np.asarray(label); prob = np.asarray(prob)
