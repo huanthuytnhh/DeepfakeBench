@@ -180,7 +180,7 @@ PY
   "$PYBIN" - <<PY
 import sys,warnings;warnings.filterwarnings("ignore");sys.path.insert(0,"training")
 from detectors import DETECTOR
-need=["efficientnetb4","efficientnetb4_sfdct"]
+need=["efficientnetb4","efficientnetb4_sfdct","efficientnetb4_hff"]
 print("detectors registered:",len(DETECTOR.data),"| needed:",{k:(k in DETECTOR.data) for k in need})
 PY
   log "preflight: upload credentials (fail fast BEFORE the paid 2h run)"
@@ -301,11 +301,24 @@ for mdl in ("efficientnetb4", "efficientnetb4_sfdct"):
     api.upload_folder(folder_path=osp.dirname(cks[-1]), repo_id=repo, repo_type="model",
                       path_in_repo=f"runs/{ts}/ckpt/{mdl}", allow_patterns=["*.pth", "*.pickle"])
     print("uploaded ckpt:", mdl); up += 1
-for tag in ("repro", "sfdct"):
+# block-DCT-HFF: R1 & R3 share model_name=efficientnetb4_hff -> upload EVERY timestamped run dir
+for ckdir in sorted(glob.glob("logs/training/efficientnetb4_hff_2*/test/Celeb-DF-v2"), key=osp.getmtime):
+    if not glob.glob(osp.join(ckdir, "ckpt_best.pth")):
+        continue
+    run = ckdir.split(osp.sep)[2]                       # efficientnetb4_hff_<ts>
+    api.upload_folder(folder_path=ckdir, repo_id=repo, repo_type="model",
+                      path_in_repo=f"runs/{ts}/ckpt/{run}", allow_patterns=["*.pth", "*.pickle"])
+    print("uploaded ckpt:", run); up += 1
+# figures: upload EVERY viz_out/* (repro, sfdct, hff_*) + training curves
+for tag in (sorted(os.listdir("viz_out")) if osp.isdir("viz_out") else []):
     if osp.isdir(f"viz_out/{tag}"):
         api.upload_folder(folder_path=f"viz_out/{tag}", repo_id=repo, repo_type="model",
                           path_in_repo=f"runs/{ts}/viz/{tag}")
         print("uploaded viz:", tag)
+if osp.isdir("outputs/training_curves"):
+    api.upload_folder(folder_path="outputs/training_curves", repo_id=repo, repo_type="model",
+                      path_in_repo=f"runs/{ts}/training_curves")
+    print("uploaded training_curves")
 print(f"DONE -> https://huggingface.co/{repo}/tree/main/runs/{ts}" if up else "no checkpoints found")
 PY
 }
