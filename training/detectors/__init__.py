@@ -17,6 +17,7 @@ except Exception as _e:
 # Core detectors the thesis needs — import HARD (fail loudly if these break).
 from .efficientnetb4_detector import EfficientDetector             # baseline B4 (efficientnetb4 / efficientnetb4_repro)
 from .efficientnetb4_sfdct_detector import EfficientSFDCTDetector  # the method (efficientnetb4_sfdct)
+from .efficientnetb4_hff_detector import EfficientHFFDetector      # block-DCT-HFF (efficientnetb4_hff): R1/R3
 from .xception_detector import XceptionDetector                    # common anchor
 
 # Every other DeepfakeBench detector registers via import side-effect. TOLERATE missing deps
