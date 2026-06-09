@@ -56,9 +56,27 @@ def build(trunk, **kw):
     return HFFHead(trunk, **kw).to(DEV).eval()
 
 
+def get_trunk():
+    """B4 trunk for the smoke — prefer the local naive ckpt, else ImageNet pretrained (./start.sh setup),
+    else random init. Module smoke (shape/floor/overfit) does NOT need trained weights."""
+    from efficientnet_pytorch import EfficientNet
+    p_naive = "serving/naive_sfdct/ckpt_best.pth"
+    p_imnet = "training/pretrained/efficientnet-b4-6ed6700e.pth"
+    if os.path.exists(p_naive):
+        return prm.load_b4(p_naive)
+    net = EfficientNet.from_name("efficientnet-b4")
+    if os.path.exists(p_imnet):
+        sd = torch.load(p_imnet, map_location="cpu"); sd = sd.get("state_dict", sd) if isinstance(sd, dict) else sd
+        miss, _ = net.load_state_dict(sd, strict=False)
+        print(f"   trunk: ImageNet B4 from {p_imnet} (missing={len(miss)})")
+    else:
+        print("   trunk: random init (no ckpt — fine for module smoke)")
+    return net.to(DEV).eval()
+
+
 def main():
     print(f"device = {DEV}")
-    trunk = prm.load_b4("serving/naive_sfdct/ckpt_best.pth")
+    trunk = get_trunk()
     x = torch.randn(4, 3, 256, 256, device=DEV)
 
     # ---- 1. SHAPE ----
