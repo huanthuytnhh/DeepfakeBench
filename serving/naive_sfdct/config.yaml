@@ -1,0 +1,106 @@
+# training/config/detector/efficientnetb4_sfdct.yaml
+# Hybrid Spatial–Frequency (block-wise DCT) detector = the thesis method.
+# Mirrors efficientnetb4.yaml / efficientnetb4_dct.yaml EXACTLY except the marked SFDCT lines,
+# so the ablation A(B4)->...->C/D(SFDCT) is fair. Keep batch / lr / seed / aug IDENTICAL across configs.
+# SMOKE vs FULL: change the 3 lines tagged [SMOKE].
+
+log_dir: logs/evaluations/effnb4_sfdct
+
+# model setting
+pretrained: ./training/pretrained/efficientnet-b4-6ed6700e.pth
+model_name: efficientnetb4_sfdct    # MUST match @DETECTOR.register_module(module_name=...)
+backbone_name: efficientnetb4
+
+# SFDCT module params (read by EfficientSFDCTDetector / sfdct_core)
+dct_channels: 1792                  # B4 final feature channels -- VERIFY (print feature shape once)
+dct_nbands: 16                      # zigzag bands -> 48-d = 3 channels x 16 bands
+freq_repr: global48                 # 'global48' (16 tokens dim 3) | 'blockgrid' (grid^2 tokens dim 48)
+dct_grid: 8                         # blockgrid: pool to (grid x grid); 8 == REAL B4 grid @256px (stride 32), not 7
+fusion_type: crossattn              # 'crossattn' | 'concat'  -- A3 one-variable ablation
+gate_mode: zero                     # 'zero'(ours, identity@init) | 'sigmoid'(SFCL) | 'const'(FGINet 0.01) -- load-bearing ablation
+gate_lr_mult: 3.0                   # gate warm-up: fusion/alpha get this x base_lr so the zero-init gate engages
+shuffle_bands: false                # negative control: true => permute bands (same params, no freq semantics)
+fusion_dim: 128                     # cross-attention d_model
+fusion_heads: 4
+
+# backbone setting
+backbone_config:
+  num_classes: 2
+  inc: 3
+  dropout: false
+  mode: Original
+
+# dataset
+all_dataset: [FaceForensics++, FF-F2F, FF-DF, FF-FS, FF-NT, FaceShifter, DeepFakeDetection, Celeb-DF-v1, Celeb-DF-v2, DFDCP, DFDC, DeeperForensics-1.0, UADFV]
+train_dataset: [FaceForensics++]                 # full FF++ (4 manipulations + real)
+test_dataset: [FaceForensics++, Celeb-DF-v2]     # within-domain + cross-domain
+
+# >>> PROTOCOL FIDELITY (to reproduce the DeepfakeBench leaderboard) <<<
+# The official EfficientB4 row was trained on the FULL FF++ split: 719 videos/manip
+# (3596 train videos, ~115k frames). The repo default train_config.yaml points at
+# './dataset_json_compare' = ONLY 25 videos/manip (~4k frames, 3.5% of data) -- that is a
+# LOCAL SMOKE subset and will NOT reproduce the published AUC. Override it here for FULL runs:
+dataset_json_folder: ./preprocessing/dataset_json   # FULL FF++/Celeb-DF jsons (719 vids/manip)
+# [SMOKE] to run a quick local check instead: ./dataset_json_compare  (25 vids/manip)
+
+compression: c23
+train_batchSize: 32          # OFFICIAL protocol = 32 ; keep SAME across all ablation configs
+test_batchSize: 32           # OFFICIAL = 32
+workers: 8                   # OFFICIAL = 8 (was 4; speed only, no AUC effect)
+frame_num: {'train': 32, 'test': 32}   # OFFICIAL = 32/32 ; [SMOKE] -> {'train': 4, 'test': 4}
+resolution: 256
+with_mask: false
+with_landmark: false
+save_ckpt: true
+save_feat: false
+
+# data augmentation (config B onward; for config A baseline set use_data_augmentation: false)
+use_data_augmentation: true
+data_aug:
+  flip_prob: 0.5
+  rotate_prob: 0.5
+  rotate_limit: [-10, 10]
+  blur_prob: 0.5
+  blur_limit: [3, 7]
+  brightness_prob: 0.5
+  brightness_limit: [-0.1, 0.1]
+  contrast_limit: [-0.1, 0.1]
+  quality_lower: 40
+  quality_upper: 100
+
+# normalization
+mean: [0.5, 0.5, 0.5]
+std: [0.5, 0.5, 0.5]
+
+# optimizer (batch 32 <-> lr 0.0002 ; if you change batch, re-scale lr)
+optimizer:
+  type: adam
+  adam:
+    lr: 0.0002
+    beta1: 0.9
+    beta2: 0.999
+    eps: 0.00000001
+    weight_decay: 0.0005
+    amsgrad: false
+  sgd:
+    lr: 0.0002
+    momentum: 0.9
+    weight_decay: 0.0005
+
+# training
+lr_scheduler: null
+nEpochs: 10                  # [SMOKE] -> 1
+start_epoch: 0
+save_epoch: 1
+rec_iter: 100
+logdir: ./logs
+manualSeed: 1024             # ablation seeds: 1024 / 2025 / 7
+loss_func: cross_entropy
+losstype: null
+
+# metric
+metric_scoring: auc
+
+# cuda
+cuda: true
+cudnn: true
